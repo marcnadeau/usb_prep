@@ -6,6 +6,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>MediaFileAnalyzer.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
