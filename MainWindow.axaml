@@ -1,0 +1,193 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+        x:Class="MediaFileAnalyzer.MainWindow"
+        Title="Audio File Analyzer &amp; FLAC Converter"
+        Height="700"
+        Width="1100"
+        WindowStartupLocation="CenterScreen">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Border Grid.Row="0" Background="#2C3E50" Padding="20,14">
+      <TextBlock Text="Audio File Analyzer &amp; FLAC to MP3 Converter"
+                 FontSize="22"
+                 FontWeight="Bold"
+                 Foreground="White" />
+    </Border>
+
+    <Border Grid.Row="1" Padding="20" Background="#ECF0F1">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Folder:"
+                   VerticalAlignment="Center"
+                   FontWeight="Bold"
+                   Margin="0,0,10,0" />
+
+        <TextBox Grid.Column="1"
+                 Name="FolderPathTextBox"
+                 VerticalAlignment="Center"
+                 Padding="8"
+                 FontSize="14"
+                 Background="White"
+                 Foreground="#1F2933"
+                 BorderBrush="#95A5A6"
+                 Watermark="Type or paste folder path here..." />
+
+        <Button Grid.Column="2"
+                Content="Browse..."
+                Click="BrowseButton_Click"
+                Padding="15,8"
+                Margin="10,0,0,0"
+                FontSize="14"
+                Background="#3498DB"
+                Foreground="White" />
+
+        <Button Grid.Column="3"
+                Content="Scan"
+                Click="ScanButton_Click"
+                Padding="15,8"
+                Margin="10,0,0,0"
+                FontSize="14"
+                FontWeight="Bold"
+                Background="#27AE60"
+                Foreground="White" />
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="2" Padding="20" Background="#ECF0F1">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Button Name="ConvertButton"
+                  Content="Convert FLAC to MP3 (320kbps)"
+                  Click="ConvertButton_Click"
+                  Padding="15,10"
+                  FontSize="14"
+                  FontWeight="Bold"
+                  Background="#E74C3C"
+                  Foreground="White"
+                  IsVisible="False" />
+
+          <Button Name="RenameButton"
+                  Content="Rename All Files (Picard)"
+                  Click="RenameButton_Click"
+                  Padding="15,10"
+                  FontSize="14"
+                  FontWeight="Bold"
+                  Background="#9B59B6"
+                  Foreground="White"
+                  IsVisible="False" />
+
+          <TextBlock VerticalAlignment="Center"
+                     Text="Rename files to follow Picard naming convention"
+                     Foreground="#555"
+                     FontStyle="Italic" />
+        </StackPanel>
+
+        <TextBlock Grid.Column="1"
+                   Name="ProgressCountText"
+                   Text=""
+                   VerticalAlignment="Center"
+                   Foreground="#333"
+                   FontWeight="Bold"
+                   Margin="20,0,0,0" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="3" Margin="20" RowDefinitions="Auto,Auto,*">
+      <Border Grid.Row="0"
+              Name="ProgressBorder"
+              Padding="15"
+              Background="#ECF0F1"
+          Margin="0,0,0,10"
+              IsVisible="False">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto">
+          <TextBlock Grid.Row="0"
+                     Name="ProgressStatusText"
+                     Text="Working..."
+                     Foreground="#333"
+                     FontWeight="Bold"
+                     Margin="0,0,0,8" />
+
+          <ProgressBar Grid.Row="1"
+                       Name="ConversionProgressBar"
+                       Height="22"
+                       Value="0"
+                       Maximum="100"
+                       Margin="0,0,0,8" />
+
+          <TextBlock Grid.Row="2"
+                     Name="CurrentFileText"
+                     Text=""
+                     Foreground="#555"
+                     FontSize="12"
+                     HorizontalAlignment="Center"
+                     Margin="0,0,0,8" />
+
+          <Button Grid.Row="3"
+                  Name="StopButton"
+                  Content="Stop"
+                  Click="StopButton_Click"
+                  Padding="14,8"
+                  HorizontalAlignment="Center"
+                  Background="#C0392B"
+                  Foreground="White"
+                  FontWeight="Bold"
+                  IsVisible="False" />
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="1" Background="#3498DB" Padding="15" CornerRadius="5" Margin="0,0,0,10">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="40">
+          <StackPanel>
+            <TextBlock Text="Total Files" Foreground="White" FontSize="12" HorizontalAlignment="Center" />
+            <TextBlock Name="TotalFilesText" Text="0" Foreground="White" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <StackPanel>
+            <TextBlock Text="MP3 Files" Foreground="White" FontSize="12" HorizontalAlignment="Center" />
+            <TextBlock Name="ImageCountText" Text="0" Foreground="White" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <StackPanel>
+            <TextBlock Text="FLAC Files" Foreground="White" FontSize="12" HorizontalAlignment="Center" />
+            <TextBlock Name="VideoCountText" Text="0" Foreground="White" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+          </StackPanel>
+
+          <StackPanel>
+            <TextBlock Text="Total Size" Foreground="White" FontSize="12" HorizontalAlignment="Center" />
+            <TextBlock Name="TotalSizeText" Text="0 MB" Foreground="White" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <d:DataGrid Grid.Row="2"
+                  Name="FilesDataGrid"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  SelectionMode="Single">
+        <d:DataGrid.Columns>
+          <d:DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
+          <d:DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80" />
+          <d:DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="100" />
+          <d:DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="100" />
+          <d:DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="*" MinWidth="200" />
+        </d:DataGrid.Columns>
+      </d:DataGrid>
+    </Grid>
+
+    <Border Grid.Row="4" Background="#34495E" Padding="10">
+      <TextBlock Name="StatusText"
+                 Text="Ready to scan. Select a folder to begin."
+                 Foreground="White"
+                 FontSize="12" />
+    </Border>
+  </Grid>
+</Window>
