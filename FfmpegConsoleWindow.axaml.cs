@@ -1,8 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -13,18 +11,23 @@ namespace MediaFileAnalyzer;
 public partial class FfmpegConsoleWindow : Window
 {
     private readonly object _logLock = new object();
-    private StringBuilder _pendingLogs = new StringBuilder();
+    private readonly StringBuilder _pendingLogs = new StringBuilder();
     private Timer? _flushTimer;
-    private const int FlushIntervalMs = 100;
-    private const int LineThresholdForFlush = 50;
+    private int _pendingLineCount;
+    private int _uiFlushQueued;
+    private const int FlushIntervalMs = 180;
+    private const int LineThresholdForFlush = 80;
+    private const int MaxConsoleChars = 200_000;
 
     public FfmpegConsoleWindow()
     {
         InitializeComponent();
+        _flushTimer = new Timer(_ => TryScheduleUiFlush(), null, FlushIntervalMs, FlushIntervalMs);
         this.Closing += (_, _) =>
         {
+            TryScheduleUiFlush();
             _flushTimer?.Dispose();
-            FlushLogs(); // Flush any remaining logs
+            _flushTimer = null;
         };
     }
 
@@ -35,6 +38,7 @@ public partial class FfmpegConsoleWindow : Window
         lock (_logLock)
         {
             _pendingLogs.Clear();
+            _pendingLineCount = 0;
         }
         
         Dispatcher.UIThread.Post(() =>
@@ -44,7 +48,7 @@ public partial class FfmpegConsoleWindow : Window
             {
                 consoleTextBox.Text = string.Empty;
             }
-        });
+        }, DispatcherPriority.Background);
     }
 
     public void AppendLog(string text)
@@ -54,23 +58,49 @@ public partial class FfmpegConsoleWindow : Window
             return;
         }
 
+        bool flushNow = false;
         lock (_logLock)
         {
             _pendingLogs.Append(text).Append(Environment.NewLine);
-            
-            // Flush if we've accumulated many lines
-            if (_pendingLogs.Length > 5000 || _pendingLogs.ToString().Split('\n').Length > LineThresholdForFlush)
-            {
-                FlushLogs();
-            }
+            _pendingLineCount++;
+            flushNow = _pendingLogs.Length > 10_000 || _pendingLineCount >= LineThresholdForFlush;
         }
 
-        // Start or restart the flush timer
-        _flushTimer?.Dispose();
-        _flushTimer = new Timer(_ => FlushLogs(), null, FlushIntervalMs, Timeout.Infinite);
+        if (flushNow)
+        {
+            TryScheduleUiFlush();
+        }
     }
 
-    private void FlushLogs()
+    private void TryScheduleUiFlush()
+    {
+        if (Interlocked.Exchange(ref _uiFlushQueued, 1) == 1)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                FlushLogsOnUiThread();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _uiFlushQueued, 0);
+
+                lock (_logLock)
+                {
+                    if (_pendingLogs.Length > 0)
+                    {
+                        TryScheduleUiFlush();
+                    }
+                }
+            }
+        }, DispatcherPriority.Background);
+    }
+
+    private void FlushLogsOnUiThread()
     {
         string logsToAdd;
         lock (_logLock)
@@ -79,21 +109,25 @@ public partial class FfmpegConsoleWindow : Window
             {
                 return;
             }
-            
+
             logsToAdd = _pendingLogs.ToString();
             _pendingLogs.Clear();
+            _pendingLineCount = 0;
         }
 
-        Dispatcher.UIThread.Post(() =>
+        var consoleTextBox = ConsoleTextBox ?? this.FindControl<TextBox>("ConsoleTextBox");
+        if (consoleTextBox != null)
         {
-            var consoleTextBox = ConsoleTextBox ?? this.FindControl<TextBox>("ConsoleTextBox");
-            if (consoleTextBox != null)
+            var existing = consoleTextBox.Text ?? string.Empty;
+            var combined = existing + logsToAdd;
+            if (combined.Length > MaxConsoleChars)
             {
-                consoleTextBox.Text = (consoleTextBox.Text ?? string.Empty) + logsToAdd;
-                // Only set caret once per batch
-                consoleTextBox.CaretIndex = consoleTextBox.Text?.Length ?? 0;
+                combined = combined[^MaxConsoleChars..];
             }
-        });
+
+            consoleTextBox.Text = combined;
+            consoleTextBox.CaretIndex = consoleTextBox.Text?.Length ?? 0;
+        }
     }
 
     private void ClearButton_Click(object? sender, RoutedEventArgs e)

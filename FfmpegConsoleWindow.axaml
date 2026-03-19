@@ -5,6 +5,52 @@
         Height="500"
         Width="900"
         WindowStartupLocation="CenterOwner">
+        <Window.Styles>
+                <Style Selector="TextBox#ConsoleTextBox">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:pointerover">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus-within">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox /template/ Border">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:pointerover /template/ Border">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus /template/ Border">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox /template/ ScrollViewer">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:pointerover /template/ ScrollViewer">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus /template/ ScrollViewer">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                </Style>
+        </Window.Styles>
   <Grid Margin="10" RowDefinitions="*,Auto">
     <TextBox Name="ConsoleTextBox"
              Grid.Row="0"

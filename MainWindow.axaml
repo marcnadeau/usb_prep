@@ -62,7 +62,7 @@
     </Border>
 
     <Border Grid.Row="2" Padding="20" Background="#ECF0F1">
-      <Grid ColumnDefinitions="*,Auto">
+      <Grid ColumnDefinitions="*,Auto,Auto">
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Button Name="ConvertButton"
                   Content="Convert FLAC to MP3 (320kbps)"
@@ -97,6 +97,16 @@
                    Foreground="#333"
                    FontWeight="Bold"
                    Margin="20,0,0,0" />
+
+        <Button Grid.Column="2"
+          Content="Quit"
+          Click="QuitButton_Click"
+          Padding="14,8"
+          Margin="10,0,0,0"
+          FontSize="13"
+          FontWeight="Bold"
+          Background="#2D3436"
+          Foreground="White" />
       </Grid>
     </Border>
 
@@ -168,11 +178,12 @@
       </Border>
 
       <d:DataGrid Grid.Row="2"
-                  Name="FilesDataGrid"
+                  x:Name="FilesDataGrid"
                   AutoGenerateColumns="False"
                   IsReadOnly="True"
                   HeadersVisibility="Column"
-                  SelectionMode="Single">
+                  SelectionMode="Single"
+                   >
         <d:DataGrid.Columns>
           <d:DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
           <d:DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80" />

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -18,7 +19,8 @@ namespace MediaFileAnalyzer;
 public partial class MainWindow : Window
 {
     private readonly ObservableCollection<MediaFileInfo> _mediaFiles = new();
-    private string _currentScanPath = string.Empty;
+        private string _currentScanPath = string.Empty;
+        private Avalonia.Controls.DataGrid? _filesDataGrid;
     private FfmpegConsoleWindow? _ffmpegConsoleWindow;
     private CancellationTokenSource? _operationCts;
     private Process? _currentFfmpegProcess;
@@ -27,12 +29,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        this.Loaded += (_, _) =>
+        Loaded += (_, _) =>
         {
-            if (FilesDataGrid != null)
-            {
-                FilesDataGrid.ItemsSource = _mediaFiles;
-            }
+            _filesDataGrid = this.FindControl<Avalonia.Controls.DataGrid>("FilesDataGrid");
+            if (_filesDataGrid != null)
+                _filesDataGrid.ItemsSource = _mediaFiles;
         };
     }
 
@@ -56,6 +57,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Ignore known harmless warning caused by embedded artwork pixel formats.
+        if (line.Contains("deprecated pixel format used, make sure you did set range correctly", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         Dispatcher.UIThread.Post(() =>
         {
             EnsureFfmpegConsoleWindow();
@@ -65,8 +72,13 @@ public partial class MainWindow : Window
 
     private void StopButton_Click(object? sender, RoutedEventArgs e)
     {
-        StopButton.IsEnabled = false;
-        StopButton.Content = "Stopping...";
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        if (stopButton != null)
+        {
+            stopButton.IsEnabled = false;
+            stopButton.Content = "Stopping...";
+        }
+
         _operationCts?.Cancel();
 
         lock (_ffmpegProcessLock)
@@ -84,6 +96,17 @@ public partial class MainWindow : Window
                 AppendFfmpegLog($"Stop warning: {ex.Message}");
             }
         }
+    }
+
+    private void QuitButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+            return;
+        }
+
+        Close();
     }
 
     private async void BrowseButton_Click(object? sender, RoutedEventArgs e)
@@ -201,7 +224,19 @@ public partial class MainWindow : Window
 
         try
         {
-            await Task.Run(() => ScanFolder(folderPath));
+            var scannedFiles = await Task.Run(() => ScanFolder(folderPath));
+
+            foreach (var mediaInfo in scannedFiles)
+            {
+                _mediaFiles.Add(mediaInfo);
+            }
+
+                // Force the DataGrid to refresh its rows
+                if (_filesDataGrid != null)
+                {
+                    _filesDataGrid.ItemsSource = null;
+                    _filesDataGrid.ItemsSource = _mediaFiles;
+                }
 
             int totalFiles = _mediaFiles.Count;
             int mp3Count = _mediaFiles.Count(f => f.Format.Equals("mp3", StringComparison.OrdinalIgnoreCase));
@@ -225,8 +260,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ScanFolder(string folderPath)
+    private List<MediaFileInfo> ScanFolder(string folderPath)
     {
+        var results = new List<MediaFileInfo>();
+
         var audioExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             ".mp3", ".m4a", ".flac"
@@ -274,7 +311,7 @@ public partial class MainWindow : Window
                         Format = extension.TrimStart('.').ToLowerInvariant()
                     };
 
-                    Dispatcher.UIThread.Post(() => _mediaFiles.Add(mediaInfo));
+                    results.Add(mediaInfo);
                 }
                 catch (UnauthorizedAccessException)
                 {
@@ -305,66 +342,81 @@ public partial class MainWindow : Window
                 directoriesToScan.Push(subDirectory);
             }
         }
+
+        return results;
     }
 
     private async void RenameButton_Click(object? sender, RoutedEventArgs e)
     {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
+        var renameButton = RenameButton ?? this.FindControl<Button>("RenameButton");
+        var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
+        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
+        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
+
         var audioFiles = _mediaFiles.ToList();
         if (audioFiles.Count == 0)
         {
-            StatusText.Text = "No audio files found to rename.";
+            if (statusText != null) statusText.Text = "No audio files found to rename.";
             return;
         }
 
-        StatusText.Text = $"Ready to rename {audioFiles.Count} file(s). Starting rename operation...";
+        if (statusText != null) statusText.Text = $"Ready to rename {audioFiles.Count} file(s). Starting rename operation...";
 
-        ProgressBorder.IsVisible = true;
-        RenameButton.IsVisible = false;
-        ConvertButton.IsVisible = false;
-        StopButton.IsVisible = true;
-        StopButton.IsEnabled = true;
-        StopButton.Content = "Stop";
-        ProgressCountText.Text = string.Empty;
-        ConversionProgressBar.Value = 0;
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (renameButton != null) renameButton.IsVisible = false;
+        if (convertButton != null) convertButton.IsVisible = false;
+        if (stopButton != null)
+        {
+            stopButton.IsVisible = true;
+            stopButton.IsEnabled = true;
+            stopButton.Content = "Stop";
+        }
+        if (progressCountText != null) progressCountText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
         _operationCts?.Dispose();
         _operationCts = new CancellationTokenSource();
 
         var progress = new Progress<ConversionProgress>(report =>
         {
-            ConversionProgressBar.Value = report.PercentComplete;
-            ProgressStatusText.Text = $"Renaming: ({report.FilesCompleted}/{report.TotalFiles})";
-            ProgressCountText.Text = $"{report.FilesCompleted}/{report.TotalFiles}";
-            CurrentFileText.Text = report.CurrentFile;
+            if (conversionProgressBar != null) conversionProgressBar.Value = report.PercentComplete;
+            if (progressStatusText != null) progressStatusText.Text = $"Renaming: ({report.FilesCompleted}/{report.TotalFiles})";
+            if (progressCountText != null) progressCountText.Text = $"{report.FilesCompleted}/{report.TotalFiles}";
+            if (currentFileText != null) currentFileText.Text = report.CurrentFile;
         });
 
         try
         {
             await Task.Run(() => RenameAllFiles(audioFiles, _currentScanPath, progress, _operationCts.Token));
 
-            ConversionProgressBar.Value = 100;
-            ProgressStatusText.Text = "Renaming complete!";
-            StatusText.Text = "Renaming complete. Re-scan folder to see updated file structure.";
-            ProgressBorder.IsVisible = false;
-            RenameButton.IsVisible = true;
-            ConvertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            StopButton.IsVisible = false;
+            if (conversionProgressBar != null) conversionProgressBar.Value = 100;
+            if (progressStatusText != null) progressStatusText.Text = "Renaming complete!";
+            if (statusText != null) statusText.Text = "Renaming complete. Re-scan folder to see updated file structure.";
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (renameButton != null) renameButton.IsVisible = true;
+            if (convertButton != null) convertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
+            if (stopButton != null) stopButton.IsVisible = false;
         }
         catch (OperationCanceledException)
         {
-            StatusText.Text = "Renaming stopped by user.";
-            ProgressStatusText.Text = "Renaming stopped.";
-            ProgressBorder.IsVisible = false;
-            RenameButton.IsVisible = true;
-            ConvertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            StopButton.IsVisible = false;
+            if (statusText != null) statusText.Text = "Renaming stopped by user.";
+            if (progressStatusText != null) progressStatusText.Text = "Renaming stopped.";
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (renameButton != null) renameButton.IsVisible = true;
+            if (convertButton != null) convertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
+            if (stopButton != null) stopButton.IsVisible = false;
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Error during renaming: {ex.Message}";
-            ProgressBorder.IsVisible = false;
-            RenameButton.IsVisible = true;
-            ConvertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            StopButton.IsVisible = false;
+            if (statusText != null) statusText.Text = $"Error during renaming: {ex.Message}";
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (renameButton != null) renameButton.IsVisible = true;
+            if (convertButton != null) convertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
+            if (stopButton != null) stopButton.IsVisible = false;
         }
         finally
         {
@@ -397,7 +449,14 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                Dispatcher.UIThread.Post(() => StatusText.Text = $"Error renaming {audioFile.FileName}: {ex.Message}");
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+                    if (statusText != null)
+                    {
+                        statusText.Text = $"Error renaming {audioFile.FileName}: {ex.Message}";
+                    }
+                });
             }
         }
     }
@@ -514,13 +573,13 @@ public partial class MainWindow : Window
                 AppendFfmpegLog($"Input : {flacFile.FilePath}");
                 AppendFfmpegLog($"Output: {outputPath}");
 
-                var arguments = $"-y -i \"{flacFile.FilePath}\" -b:a 320k -q:v 0 \"{outputPath}\"";
+                var arguments = $"-hide_banner -nostats -loglevel warning -y -i \"{flacFile.FilePath}\" -vn -b:a 320k \"{outputPath}\"";
                 var processInfo = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
                     Arguments = arguments,
                     UseShellExecute = false,
-                    RedirectStandardOutput = true,
+                    RedirectStandardOutput = false,
                     RedirectStandardError = true,
                     CreateNoWindow = true
                 };
@@ -532,14 +591,6 @@ public partial class MainWindow : Window
                     _currentFfmpegProcess = process;
                 }
 
-                process.OutputDataReceived += (_, eventArgs) =>
-                {
-                    if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                    {
-                        AppendFfmpegLog(eventArgs.Data);
-                    }
-                };
-
                 process.ErrorDataReceived += (_, eventArgs) =>
                 {
                     if (!string.IsNullOrWhiteSpace(eventArgs.Data))
@@ -548,7 +599,6 @@ public partial class MainWindow : Window
                     }
                 };
 
-                process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 process.WaitForExit();
 
@@ -600,7 +650,14 @@ public partial class MainWindow : Window
                 }
 
                 AppendFfmpegLog($"ERROR: {ex.Message}");
-                Dispatcher.UIThread.Post(() => StatusText.Text = $"Error converting {flacFile.FileName}: {ex.Message}");
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+                    if (statusText != null)
+                    {
+                        statusText.Text = $"Error converting {flacFile.FileName}: {ex.Message}";
+                    }
+                });
             }
         }
 
