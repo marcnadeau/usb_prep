@@ -84,10 +84,22 @@
                   Foreground="White"
                   IsVisible="False" />
 
-          <TextBlock VerticalAlignment="Center"
+          <CheckBox Name="CompilationCheckBox"
+                    IsVisible="False"
+                    IsChecked="True"
+                    VerticalAlignment="Center"
+                    ToolTip.Tip="When checked, albums that contain tracks from multiple artists (and have no AlbumArtist tag) are grouped into a 'Various Artists' folder, matching MusicBrainz Picard behavior.">
+            <TextBlock Text="Group multi-artist albums under 'Various Artists'"
+                       Foreground="#333"
+                       FontStyle="Italic" />
+          </CheckBox>
+
+          <TextBlock Name="NamingHintText"
+                     VerticalAlignment="Center"
                      Text="Rename files to follow Picard naming convention"
                      Foreground="#555"
-                     FontStyle="Italic" />
+                     FontStyle="Italic"
+                     IsVisible="True" />
         </StackPanel>
 
         <TextBlock Grid.Column="1"
