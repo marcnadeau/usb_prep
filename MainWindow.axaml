@@ -11,6 +11,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
@@ -25,7 +26,7 @@
     <Border Grid.Row="1" Padding="20" Background="#ECF0F1">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto">
         <TextBlock Grid.Column="0"
-                   Text="Folder:"
+                   Text="Source:"
                    VerticalAlignment="Center"
                    FontWeight="Bold"
                    Margin="0,0,10,0" />
@@ -61,7 +62,49 @@
       </Grid>
     </Border>
 
-    <Border Grid.Row="2" Padding="20" Background="#ECF0F1">
+    <Border Grid.Row="2" Padding="20" Background="#DCE8EE">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+        <TextBlock Grid.Column="0"
+                   Text="Target:"
+                   VerticalAlignment="Center"
+                   FontWeight="Bold"
+                   Margin="0,0,10,0" />
+
+        <TextBox Grid.Column="1"
+                 Name="TargetFolderPathTextBox"
+                 VerticalAlignment="Center"
+                 Padding="8"
+                 FontSize="14"
+                 IsReadOnly="True"
+                 Background="White"
+                 Foreground="#1F2933"
+                 BorderBrush="#95A5A6"
+                 Watermark="Select target folder (USB drive)..." />
+
+        <Button Grid.Column="2"
+                Content="Browse..."
+                Click="BrowseTargetButton_Click"
+                Padding="15,8"
+                Margin="10,0,0,0"
+                FontSize="14"
+                Background="#2980B9"
+                Foreground="White" />
+
+        <Button Grid.Column="3"
+                Name="CompareButton"
+                Content="Compare"
+                Click="CompareButton_Click"
+                Padding="15,8"
+                Margin="10,0,0,0"
+                FontSize="14"
+                FontWeight="Bold"
+                Background="#16A085"
+                Foreground="White"
+                IsEnabled="False" />
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="3" Padding="20" Background="#ECF0F1">
       <Grid ColumnDefinitions="*,Auto,Auto">
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Button Name="ConvertButton"
@@ -84,6 +127,16 @@
                   Foreground="White"
                   IsVisible="False" />
 
+          <Button Name="TransferButton"
+                  Content="Transfer Selected/Missing to Target"
+                  Click="TransferButton_Click"
+                  Padding="15,10"
+                  FontSize="14"
+                  FontWeight="Bold"
+                  Background="#1F7A8C"
+                  Foreground="White"
+                  IsVisible="False" />
+
           <CheckBox Name="CompilationCheckBox"
                     IsVisible="False"
                     IsChecked="True"
@@ -96,7 +149,7 @@
 
           <TextBlock Name="NamingHintText"
                      VerticalAlignment="Center"
-                     Text="Rename files to follow Picard naming convention"
+                     Text="Compare source vs target by metadata, then transfer selected/missing files."
                      Foreground="#555"
                      FontStyle="Italic"
                      IsVisible="True" />
@@ -122,7 +175,7 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="3" Margin="20" RowDefinitions="Auto,Auto,*">
+    <Grid Grid.Row="4" Margin="20" RowDefinitions="Auto,Auto,*">
       <Border Grid.Row="0"
               Name="ProgressBorder"
               Padding="15"
@@ -194,21 +247,25 @@
                   AutoGenerateColumns="False"
                   IsReadOnly="True"
                   HeadersVisibility="Column"
-                  SelectionMode="Single"
+                  SelectionMode="Extended"
                    >
         <d:DataGrid.Columns>
           <d:DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
           <d:DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80" />
           <d:DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="100" />
+          <d:DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="140" />
+          <d:DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="160" />
+          <d:DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="180" />
+          <d:DataGridTextColumn Header="Compare" Binding="{Binding CompareStatus}" Width="120" />
           <d:DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="100" />
           <d:DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="*" MinWidth="200" />
         </d:DataGrid.Columns>
       </d:DataGrid>
     </Grid>
 
-    <Border Grid.Row="4" Background="#34495E" Padding="10">
+    <Border Grid.Row="5" Background="#34495E" Padding="10">
       <TextBlock Name="StatusText"
-                 Text="Ready to scan. Select a folder to begin."
+                 Text="Ready to scan. Select source and target folders to begin."
                  Foreground="White"
                  FontSize="12" />
     </Border>
