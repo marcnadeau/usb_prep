@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using TagLib;
@@ -9,11 +10,72 @@ namespace MediaFileAnalyzer
     public static class FileNamer
     {
         /// <summary>
-        /// Gets the Picard-style file path based on audio metadata
+        /// Scans the provided file paths and returns a set of album names that should be treated
+        /// as compilations (i.e., same album with more than one distinct track artist and no
+        /// AlbumArtist tag set on any of the files).  The returned set uses
+        /// OrdinalIgnoreCase comparison so it can be fed directly into GetPicardPath.
+        /// </summary>
+        public static HashSet<string> DetectCompilationAlbums(IEnumerable<string> filePaths)
+        {
+            // album name -> list of (trackArtist, albumArtist)
+            var albumGroups = new Dictionary<string, List<(string trackArtist, string albumArtist)>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var filePath in filePaths)
+            {
+                try
+                {
+                    using var audioFile = TagLib.File.Create(filePath);
+                    var tag = audioFile.Tag;
+                    string album = !string.IsNullOrWhiteSpace(tag.Album) ? tag.Album : "Singles";
+                    string trackArtist = tag.FirstPerformer ?? string.Empty;
+                    string albumArtist = tag.FirstAlbumArtist ?? string.Empty;
+
+                    if (!albumGroups.TryGetValue(album, out var list))
+                    {
+                        list = new List<(string, string)>();
+                        albumGroups[album] = list;
+                    }
+                    list.Add((trackArtist, albumArtist));
+                }
+                catch
+                {
+                    // Skip files whose tags cannot be read.
+                }
+            }
+
+            var compilations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in albumGroups)
+            {
+                var entries = kvp.Value;
+
+                // If any file already carries an AlbumArtist the folder name is already correct.
+                bool hasAlbumArtist = entries.Any(e => !string.IsNullOrWhiteSpace(e.albumArtist));
+                if (hasAlbumArtist)
+                    continue;
+
+                // Multiple distinct track artists → compilation.
+                int distinctArtists = entries
+                    .Select(e => e.trackArtist.Trim())
+                    .Where(a => !string.IsNullOrWhiteSpace(a))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+
+                if (distinctArtists > 1)
+                    compilations.Add(kvp.Key);
+            }
+
+            return compilations;
+        }
+
+        /// <summary>
+        /// Gets the Picard-style file path based on audio metadata.
         /// Format: AlbumArtist/Album/[DiscNumber-]TrackNumber - Title
         /// Matches Picard convention: $if2(%albumartist%,%artist%) - $if2(%album%,Singles)/...
+        /// When <paramref name="compilationAlbums"/> is provided and the file's album is in that
+        /// set, "Various Artists" is used as the folder name (mimicking Picard's compilation
+        /// behavior) unless the file already has an AlbumArtist tag.
         /// </summary>
-        public static string GetPicardPath(string filePath, string outputDirectory)
+        public static string GetPicardPath(string filePath, string outputDirectory, IReadOnlySet<string>? compilationAlbums = null)
         {
             try
             {
@@ -21,14 +83,26 @@ namespace MediaFileAnalyzer
                 {
                     var tag = audioFile.Tag;
                     
-                    // Extract metadata with fallbacks following Picard logic
-                    // $if2(%albumartist%,%artist%) - prefer album artist, fallback to track artist
-                    string artist = !string.IsNullOrWhiteSpace(tag.FirstAlbumArtist)
-                        ? tag.FirstAlbumArtist
-                        : (!string.IsNullOrWhiteSpace(tag.FirstPerformer) ? tag.FirstPerformer : "Unknown Artist");
-                    
                     // $if2(%album%,Singles) - prefer album name, fallback to "Singles"
                     string album = !string.IsNullOrWhiteSpace(tag.Album) ? tag.Album : "Singles";
+
+                    // Extract artist following Picard logic:
+                    //   1. Use AlbumArtist tag if present.
+                    //   2. If the album is flagged as a compilation, use "Various Artists".
+                    //   3. Otherwise fall back to the track artist.
+                    string artist;
+                    if (!string.IsNullOrWhiteSpace(tag.FirstAlbumArtist))
+                    {
+                        artist = tag.FirstAlbumArtist;
+                    }
+                    else if (compilationAlbums != null && compilationAlbums.Contains(album))
+                    {
+                        artist = "Various Artists";
+                    }
+                    else
+                    {
+                        artist = !string.IsNullOrWhiteSpace(tag.FirstPerformer) ? tag.FirstPerformer : "Unknown Artist";
+                    }
                     
                     uint trackNumber = tag.Track;
                     uint discNumber = tag.Disc;
@@ -108,14 +182,16 @@ namespace MediaFileAnalyzer
         }
 
         /// <summary>
-        /// Renames a file to Picard-style naming and moves it to the correct directory
+        /// Renames a file to Picard-style naming and moves it to the correct directory.
+        /// Pass <paramref name="compilationAlbums"/> (from <see cref="DetectCompilationAlbums"/>)
+        /// to have multi-artist albums grouped under a "Various Artists" folder.
         /// </summary>
-        public static bool RenameToPickardStyle(string filePath, string basePath)
+        public static bool RenameToPickardStyle(string filePath, string basePath, IReadOnlySet<string>? compilationAlbums = null)
         {
             try
             {
                 string? sourceDirectory = Path.GetDirectoryName(filePath);
-                var newPath = GetPicardPath(filePath, basePath);
+                var newPath = GetPicardPath(filePath, basePath, compilationAlbums);
                 
                 // Create directory if it doesn't exist
                 string? directory = Path.GetDirectoryName(newPath);

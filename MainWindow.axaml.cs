@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _operationCts;
     private Process? _currentFfmpegProcess;
     private readonly object _ffmpegProcessLock = new();
+    private HashSet<string> _detectedCompilationAlbums = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindow()
     {
@@ -250,6 +251,31 @@ public partial class MainWindow : Window
             if (statusText != null) statusText.Text = $"Scan complete. Found {totalFiles} audio file(s). FLAC files: {flacCount}";
             if (convertButton != null) convertButton.IsVisible = flacCount > 0;
             if (renameButton != null) renameButton.IsVisible = totalFiles > 0;
+
+            // Detect compilation albums in the background (reads tags for grouping).
+            var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
+            var namingHintText = NamingHintText ?? this.FindControl<TextBlock>("NamingHintText");
+            if (totalFiles > 0)
+            {
+                var allPaths = _mediaFiles.Select(f => f.FilePath).ToList();
+                _detectedCompilationAlbums = await Task.Run(() => FileNamer.DetectCompilationAlbums(allPaths));
+                bool hasCompilations = _detectedCompilationAlbums.Count > 0;
+                if (compilationCheckBox != null)
+                {
+                    compilationCheckBox.IsVisible = hasCompilations;
+                    compilationCheckBox.IsChecked = hasCompilations;
+                }
+                if (namingHintText != null)
+                    namingHintText.IsVisible = !hasCompilations;
+                if (hasCompilations && statusText != null)
+                    statusText.Text += $" — {_detectedCompilationAlbums.Count} multi-artist album(s) detected.";
+            }
+            else
+            {
+                _detectedCompilationAlbums.Clear();
+                if (compilationCheckBox != null) compilationCheckBox.IsVisible = false;
+                if (namingHintText != null) namingHintText.IsVisible = true;
+            }
         }
         catch (Exception ex)
         {
@@ -365,6 +391,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Respect the compilation checkbox: pass the detected set only when the box is checked.
+        var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
+        IReadOnlySet<string>? compilationAlbums = (compilationCheckBox?.IsChecked == true)
+            ? _detectedCompilationAlbums
+            : null;
+
         if (statusText != null) statusText.Text = $"Ready to rename {audioFiles.Count} file(s). Starting rename operation...";
 
         if (progressBorder != null) progressBorder.IsVisible = true;
@@ -391,7 +423,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await Task.Run(() => RenameAllFiles(audioFiles, _currentScanPath, progress, _operationCts.Token));
+            await Task.Run(() => RenameAllFiles(audioFiles, _currentScanPath, compilationAlbums, progress, _operationCts.Token));
 
             if (conversionProgressBar != null) conversionProgressBar.Value = 100;
             if (progressStatusText != null) progressStatusText.Text = "Renaming complete!";
@@ -425,7 +457,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RenameAllFiles(List<MediaFileInfo> audioFiles, string basePath, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
+    private void RenameAllFiles(List<MediaFileInfo> audioFiles, string basePath, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
     {
         int filesCompleted = 0;
         int totalFiles = audioFiles.Count;
@@ -435,7 +467,7 @@ public partial class MainWindow : Window
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                FileNamer.RenameToPickardStyle(audioFile.FilePath, basePath);
+                FileNamer.RenameToPickardStyle(audioFile.FilePath, basePath, compilationAlbums);
                 filesCompleted++;
                 int percentComplete = (filesCompleted * 100) / totalFiles;
 
@@ -486,6 +518,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Capture compilation preference on the UI thread before handing off to background.
+        var compilationCheckBoxForConvert = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
+        IReadOnlySet<string>? compilationAlbumsForConvert = (compilationCheckBoxForConvert?.IsChecked == true)
+            ? _detectedCompilationAlbums
+            : null;
+
         if (statusText != null) statusText.Text = $"Starting conversion of {flacFiles.Count} FLAC file(s)...";
 
         if (progressBorder != null) progressBorder.IsVisible = true;
@@ -523,7 +561,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await Task.Run(() => ConvertFlacToMp3(flacFiles, progress, _operationCts.Token));
+            await Task.Run(() => ConvertFlacToMp3(flacFiles, compilationAlbumsForConvert, progress, _operationCts.Token));
 
             if (conversionProgressBar != null) conversionProgressBar.Value = 100;
             if (progressStatusText != null) progressStatusText.Text = "Conversion complete!";
@@ -558,7 +596,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ConvertFlacToMp3(List<MediaFileInfo> flacFiles, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
+    private void ConvertFlacToMp3(List<MediaFileInfo> flacFiles, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
     {
         int filesCompleted = 0;
         int totalFiles = flacFiles.Count;
@@ -619,7 +657,7 @@ public partial class MainWindow : Window
                     string baseDirectory = string.IsNullOrWhiteSpace(_currentScanPath)
                         ? Path.GetDirectoryName(flacFile.FilePath) ?? Directory.GetCurrentDirectory()
                         : _currentScanPath;
-                    FileNamer.RenameToPickardStyle(outputPath, baseDirectory);
+                    FileNamer.RenameToPickardStyle(outputPath, baseDirectory, compilationAlbums);
                     AppendFfmpegLog("Renamed/moved converted MP3 with Picard naming.");
                 }
 
