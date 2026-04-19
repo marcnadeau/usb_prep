@@ -186,7 +186,7 @@ namespace MediaFileAnalyzer
         /// Pass <paramref name="compilationAlbums"/> (from <see cref="DetectCompilationAlbums"/>)
         /// to have multi-artist albums grouped under a "Various Artists" folder.
         /// </summary>
-        public static bool RenameToPickardStyle(string filePath, string basePath, IReadOnlySet<string>? compilationAlbums = null)
+        public static bool RenameToPicardStyle(string filePath, string basePath, IReadOnlySet<string>? compilationAlbums = null)
         {
             try
             {
