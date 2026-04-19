@@ -5,8 +5,9 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
-    <ApplicationIcon>MediaFileAnalyzer.ico</ApplicationIcon>
+    <ApplicationIcon>MediaFileanalyzer.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

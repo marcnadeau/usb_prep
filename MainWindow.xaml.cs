@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -14,8 +15,20 @@ namespace MediaFileAnalyzer
 {
     public partial class MainWindow : Window
     {
+        private static readonly HashSet<string> SupportedAudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".mp3", ".m4a"
+        };
+
+        private static readonly HashSet<string> ScannableAudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg", ".wma", ".aiff", ".alac"
+        };
+
         private ObservableCollection<MediaFileInfo> _mediaFiles;
         private string _currentScanPath = string.Empty;
+        private string _targetPath = string.Empty;
+        private bool _hasComparisonResults;
         private FfmpegConsoleWindow? _ffmpegConsoleWindow;
         private CancellationTokenSource? _operationCts;
         private Process? _currentFfmpegProcess;
@@ -94,7 +107,27 @@ namespace MediaFileAnalyzer
                 {
                     FolderPathTextBox.Text = dialog.SelectedPath;
                     _currentScanPath = dialog.SelectedPath;
+                    _hasComparisonResults = false;
                     StatusText.Text = $"Folder selected: {dialog.SelectedPath}";
+                    UpdateActionAvailability();
+                }
+            }
+        }
+
+        private void BrowseTargetButton_Click(object sender, RoutedEventArgs e)
+        {
+            using (var dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "Select a target folder (USB drive destination)";
+                dialog.ShowNewFolderButton = true;
+
+                if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                {
+                    TargetFolderPathTextBox.Text = dialog.SelectedPath;
+                    _targetPath = dialog.SelectedPath;
+                    _hasComparisonResults = false;
+                    StatusText.Text = $"Target folder selected: {dialog.SelectedPath}";
+                    UpdateActionAvailability();
                 }
             }
         }
@@ -111,6 +144,7 @@ namespace MediaFileAnalyzer
             }
 
             _currentScanPath = folderPath;
+            _hasComparisonResults = false;
 
             // Clear previous results
             _mediaFiles.Clear();
@@ -157,6 +191,8 @@ namespace MediaFileAnalyzer
                     {
                         RenameButton.Visibility = Visibility.Collapsed;
                     }
+
+                    UpdateActionAvailability();
                 });
             }
             catch (Exception ex)
@@ -164,13 +200,12 @@ namespace MediaFileAnalyzer
                 MessageBox.Show($"Error scanning folder: {ex.Message}", "Error", 
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 StatusText.Text = "Error occurred during scan.";
+                UpdateActionAvailability();
             }
         }
 
         private void ScanFolder(string folderPath)
         {
-            var audioExtensions = new[] { ".mp3", ".m4a", ".flac" };
-
             try
             {
                 var files = Directory.GetFiles(folderPath, "*.*", SearchOption.AllDirectories);
@@ -179,9 +214,10 @@ namespace MediaFileAnalyzer
                 {
                     var extension = Path.GetExtension(file).ToLower();
                     
-                    if (audioExtensions.Contains(extension))
+                    if (ScannableAudioExtensions.Contains(extension))
                     {
                         var fileInfo = new FileInfo(file);
+                        var metadata = ReadTrackMetadata(file);
                         var mediaInfo = new MediaFileInfo
                         {
                             FileName = fileInfo.Name,
@@ -189,7 +225,11 @@ namespace MediaFileAnalyzer
                             FileType = "Audio",
                             FileSizeBytes = fileInfo.Length,
                             FileSize = FormatFileSize(fileInfo.Length),
-                            Format = extension.TrimStart('.')
+                            Format = extension.TrimStart('.'),
+                            Artist = metadata.Artist,
+                            Album = metadata.Album,
+                            Title = metadata.Title,
+                            CompareStatus = "Not compared"
                         };
 
                         Dispatcher.Invoke(() => _mediaFiles.Add(mediaInfo));
@@ -200,6 +240,500 @@ namespace MediaFileAnalyzer
             {
                 // Skip folders we don't have access to
             }
+        }
+
+        private void UpdateActionAvailability()
+        {
+            bool hasSource = !string.IsNullOrWhiteSpace(_currentScanPath) && Directory.Exists(_currentScanPath);
+            bool hasTarget = !string.IsNullOrWhiteSpace(_targetPath) && Directory.Exists(_targetPath);
+            bool hasFiles = _mediaFiles.Count > 0;
+
+            CompareButton.IsEnabled = hasSource && hasTarget && hasFiles;
+            TransferButton.Visibility = hasTarget && hasFiles ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async void CompareButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+            {
+                MessageBox.Show("Please select a valid target folder.", "Missing Target",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (_mediaFiles.Count == 0)
+            {
+                MessageBox.Show("Scan a source folder first.", "No Source Files",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            ProgressBorder.Visibility = Visibility.Visible;
+            StopButton.Visibility = Visibility.Visible;
+            StopButton.IsEnabled = true;
+            StopButton.Content = "Stop";
+            ProgressStatusText.Text = "Comparing source and target metadata...";
+            CurrentFileText.Text = string.Empty;
+            ConversionProgressBar.Value = 0;
+            _operationCts?.Dispose();
+            _operationCts = new CancellationTokenSource();
+
+            try
+            {
+                var result = await Task.Run(() => CompareSourceAndTarget(_operationCts.Token));
+
+                Dispatcher.Invoke(() =>
+                {
+                    ProgressBorder.Visibility = Visibility.Collapsed;
+                    StopButton.Visibility = Visibility.Collapsed;
+                    _hasComparisonResults = true;
+                    StatusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}.";
+                    TransferButton.Visibility = Visibility.Visible;
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ProgressBorder.Visibility = Visibility.Collapsed;
+                    StopButton.Visibility = Visibility.Collapsed;
+                    StatusText.Text = "Comparison stopped by user.";
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ProgressBorder.Visibility = Visibility.Collapsed;
+                    StopButton.Visibility = Visibility.Collapsed;
+                    MessageBox.Show($"Error during compare: {ex.Message}", "Compare Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    StatusText.Text = "Comparison failed.";
+                });
+            }
+            finally
+            {
+                _operationCts?.Dispose();
+                _operationCts = null;
+            }
+        }
+
+        private CompareResult CompareSourceAndTarget(CancellationToken cancellationToken)
+        {
+            var targetKeys = BuildMetadataKeySet(_targetPath, cancellationToken);
+            int total = _mediaFiles.Count;
+            int processed = 0;
+            int missing = 0;
+            int alreadyOnTarget = 0;
+            int unknown = 0;
+
+            foreach (var mediaFile in _mediaFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                processed++;
+
+                var key = BuildTrackKey(mediaFile.Artist, mediaFile.Album, mediaFile.Title, mediaFile.FileName);
+                string status;
+
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    unknown++;
+                    status = "Unknown tags";
+                }
+                else if (targetKeys.Contains(key))
+                {
+                    alreadyOnTarget++;
+                    status = "On target";
+                }
+                else
+                {
+                    missing++;
+                    status = "Missing";
+                }
+
+                int percent = (processed * 100) / Math.Max(1, total);
+                Dispatcher.Invoke(() =>
+                {
+                    mediaFile.CompareStatus = status;
+                    ConversionProgressBar.Value = percent;
+                    ProgressCountText.Text = $"{processed}/{total}";
+                    CurrentFileText.Text = mediaFile.FileName;
+                    FilesDataGrid.Items.Refresh();
+                });
+            }
+
+            return new CompareResult(missing, alreadyOnTarget, unknown);
+        }
+
+        private HashSet<string> BuildMetadataKeySet(string basePath, CancellationToken cancellationToken)
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var files = Directory.GetFiles(basePath, "*.*", SearchOption.AllDirectories);
+
+            foreach (var file in files)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var extension = Path.GetExtension(file);
+                if (!ScannableAudioExtensions.Contains(extension))
+                {
+                    continue;
+                }
+
+                var metadata = ReadTrackMetadata(file);
+                var key = BuildTrackKey(metadata.Artist, metadata.Album, metadata.Title, Path.GetFileName(file));
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    keys.Add(key);
+                }
+            }
+
+            return keys;
+        }
+
+        private async void TransferButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+            {
+                MessageBox.Show("Please choose a valid target folder before transferring.", "Missing Target",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var selectedFiles = GetSelectedMediaFiles();
+            var candidates = selectedFiles.Count > 0
+                ? selectedFiles
+                : _mediaFiles.Where(m => string.Equals(m.CompareStatus, "Missing", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show("Select files to transfer, or run compare so missing files can be transferred.", "No Transfer Candidates",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (selectedFiles.Count == 0 && !_hasComparisonResults)
+            {
+                var proceedWithoutCompare = MessageBox.Show(
+                    "No files selected and no compare results found. Transfer all scanned files instead?",
+                    "Transfer Confirmation",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (proceedWithoutCompare != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                candidates = _mediaFiles.ToList();
+            }
+
+            bool hasUnsupported = candidates.Any(c => !SupportedAudioExtensions.Contains($".{c.Format}"));
+            bool convertUnsupported = false;
+
+            if (hasUnsupported)
+            {
+                var convertPrompt = MessageBox.Show(
+                    "Some selected files are not MP3/M4A. Convert unsupported files to MP3 before copying?\n\nChoose No to skip unsupported files.",
+                    "Convert Before Copy",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Question);
+
+                if (convertPrompt == MessageBoxResult.Cancel)
+                {
+                    return;
+                }
+
+                convertUnsupported = convertPrompt == MessageBoxResult.Yes;
+
+                if (convertUnsupported && !FFmpegHelper.IsFFmpegInstalled())
+                {
+                    MessageBox.Show("FFmpeg is required to convert unsupported formats.", "FFmpeg Not Found",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            var startTransfer = MessageBox.Show(
+                $"Transfer {candidates.Count} file(s) to target folder?",
+                "Start Transfer",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (startTransfer != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            ProgressBorder.Visibility = Visibility.Visible;
+            StopButton.Visibility = Visibility.Visible;
+            StopButton.IsEnabled = true;
+            StopButton.Content = "Stop";
+            ProgressStatusText.Text = "Transferring files...";
+            CurrentFileText.Text = string.Empty;
+            ConversionProgressBar.Value = 0;
+            _operationCts?.Dispose();
+            _operationCts = new CancellationTokenSource();
+
+            if (convertUnsupported)
+            {
+                EnsureFfmpegConsoleWindow();
+                _ffmpegConsoleWindow?.Show();
+                _ffmpegConsoleWindow?.Activate();
+                AppendFfmpegLog($"=== Transfer conversion started at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            }
+
+            try
+            {
+                var summary = await Task.Run(() => TransferFiles(candidates, convertUnsupported, _operationCts.Token));
+
+                Dispatcher.Invoke(() =>
+                {
+                    ProgressBorder.Visibility = Visibility.Collapsed;
+                    StopButton.Visibility = Visibility.Collapsed;
+                    StatusText.Text = $"Transfer complete. Copied: {summary.Copied}, Converted: {summary.Converted}, Skipped: {summary.Skipped}, Failed: {summary.Failed}.";
+                    MessageBox.Show(
+                        $"Transfer complete.\nCopied: {summary.Copied}\nConverted: {summary.Converted}\nSkipped: {summary.Skipped}\nFailed: {summary.Failed}",
+                        "Transfer Summary",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ProgressBorder.Visibility = Visibility.Collapsed;
+                    StopButton.Visibility = Visibility.Collapsed;
+                    StatusText.Text = "Transfer stopped by user.";
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ProgressBorder.Visibility = Visibility.Collapsed;
+                    StopButton.Visibility = Visibility.Collapsed;
+                    MessageBox.Show($"Transfer failed: {ex.Message}", "Transfer Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    StatusText.Text = "Transfer failed.";
+                });
+            }
+            finally
+            {
+                _operationCts?.Dispose();
+                _operationCts = null;
+                if (convertUnsupported)
+                {
+                    AppendFfmpegLog($"=== Transfer conversion ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+                }
+            }
+        }
+
+        private List<MediaFileInfo> GetSelectedMediaFiles()
+        {
+            var result = new List<MediaFileInfo>();
+            if (FilesDataGrid.SelectedItems is IList selected)
+            {
+                foreach (var item in selected)
+                {
+                    if (item is MediaFileInfo media)
+                    {
+                        result.Add(media);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private TransferSummary TransferFiles(List<MediaFileInfo> candidates, bool convertUnsupported, CancellationToken cancellationToken)
+        {
+            int copied = 0;
+            int converted = 0;
+            int skipped = 0;
+            int failed = 0;
+            int total = candidates.Count;
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var media = candidates[i];
+
+                try
+                {
+                    string extension = Path.GetExtension(media.FilePath).ToLowerInvariant();
+                    bool directCopy = SupportedAudioExtensions.Contains(extension);
+
+                    if (!directCopy && !convertUnsupported)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    string relativePath = Path.GetRelativePath(_currentScanPath, media.FilePath);
+                    string destinationRelative = directCopy
+                        ? relativePath
+                        : Path.ChangeExtension(relativePath, ".mp3");
+                    string destinationPath = Path.Combine(_targetPath, destinationRelative);
+
+                    string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+                    if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                    {
+                        Directory.CreateDirectory(destinationDirectory);
+                    }
+
+                    if (File.Exists(destinationPath))
+                    {
+                        var decision = PromptConflictDecision(media.FileName, destinationPath);
+                        if (decision == MessageBoxResult.Cancel)
+                        {
+                            throw new OperationCanceledException("Transfer canceled by user on conflict prompt.");
+                        }
+
+                        if (decision == MessageBoxResult.No)
+                        {
+                            skipped++;
+                            continue;
+                        }
+                    }
+
+                    if (directCopy)
+                    {
+                        File.Copy(media.FilePath, destinationPath, overwrite: true);
+                        copied++;
+                    }
+                    else
+                    {
+                        ConvertFileToMp3(media.FilePath, destinationPath, cancellationToken);
+                        converted++;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    failed++;
+                }
+                finally
+                {
+                    int percent = ((i + 1) * 100) / Math.Max(1, total);
+                    Dispatcher.Invoke(() =>
+                    {
+                        ConversionProgressBar.Value = percent;
+                        ProgressCountText.Text = $"{i + 1}/{total}";
+                        CurrentFileText.Text = candidates[i].FileName;
+                    });
+                }
+            }
+
+            return new TransferSummary(copied, converted, skipped, failed);
+        }
+
+        private MessageBoxResult PromptConflictDecision(string fileName, string destinationPath)
+        {
+            return Dispatcher.Invoke(() => MessageBox.Show(
+                $"File already exists:\n{fileName}\n\nDestination:\n{destinationPath}\n\nYes = Overwrite, No = Skip, Cancel = Stop transfer.",
+                "File Conflict",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question));
+        }
+
+        private void ConvertFileToMp3(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+        {
+            AppendFfmpegLog($"Converting for transfer: {sourcePath} -> {destinationPath}");
+            var arguments = $"-y -i \"{sourcePath}\" -b:a 320k -q:v 0 \"{destinationPath}\"";
+            var processInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(processInfo) ?? throw new Exception("Unable to start ffmpeg process.");
+
+            lock (_ffmpegProcessLock)
+            {
+                _currentFfmpegProcess = process;
+            }
+
+            process.OutputDataReceived += (_, eventArgs) =>
+            {
+                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
+                {
+                    AppendFfmpegLog(eventArgs.Data);
+                }
+            };
+
+            process.ErrorDataReceived += (_, eventArgs) =>
+            {
+                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
+                {
+                    AppendFfmpegLog(eventArgs.Data);
+                }
+            };
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            process.WaitForExit();
+            cancellationToken.ThrowIfCancellationRequested();
+
+            lock (_ffmpegProcessLock)
+            {
+                _currentFfmpegProcess = null;
+            }
+
+            if (process.ExitCode != 0)
+            {
+                throw new Exception($"FFmpeg failed with exit code {process.ExitCode}");
+            }
+        }
+
+        private (string Artist, string Album, string Title) ReadTrackMetadata(string filePath)
+        {
+            try
+            {
+                using var tagFile = TagLib.File.Create(filePath);
+                string artist = tagFile.Tag.FirstPerformer ?? string.Empty;
+                string album = tagFile.Tag.Album ?? string.Empty;
+                string title = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(filePath);
+                return (artist.Trim(), album.Trim(), title.Trim());
+            }
+            catch
+            {
+                return (string.Empty, string.Empty, Path.GetFileNameWithoutExtension(filePath));
+            }
+        }
+
+        private string BuildTrackKey(string artist, string album, string title, string fileName)
+        {
+            string normalizedArtist = NormalizeKeyPart(artist);
+            string normalizedAlbum = NormalizeKeyPart(album);
+            string normalizedTitle = NormalizeKeyPart(title);
+
+            if (!string.IsNullOrWhiteSpace(normalizedArtist) &&
+                !string.IsNullOrWhiteSpace(normalizedAlbum) &&
+                !string.IsNullOrWhiteSpace(normalizedTitle))
+            {
+                return $"{normalizedArtist}|{normalizedAlbum}|{normalizedTitle}";
+            }
+
+            string fallback = NormalizeKeyPart(Path.GetFileNameWithoutExtension(fileName));
+            return string.IsNullOrWhiteSpace(fallback) ? string.Empty : $"fallback|{fallback}";
+        }
+
+        private static string NormalizeKeyPart(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            return string.Join(' ', value.Trim().ToLowerInvariant().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
         }
 
         private async void RenameButton_Click(object sender, RoutedEventArgs e)
@@ -679,7 +1213,14 @@ namespace MediaFileAnalyzer
         public long FileSizeBytes { get; set; }
         public string Dimensions { get; set; } = string.Empty;
         public string Format { get; set; } = string.Empty;
+        public string Artist { get; set; } = string.Empty;
+        public string Album { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string CompareStatus { get; set; } = "Not compared";
     }
+
+    public record CompareResult(int MissingCount, int AlreadyOnTargetCount, int UnknownCount);
+    public record TransferSummary(int Copied, int Converted, int Skipped, int Failed);
 
     public class ConversionProgress
     {

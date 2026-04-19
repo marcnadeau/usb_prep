@@ -9,6 +9,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -21,7 +22,7 @@
                        Foreground="White"/>
         </Border>
 
-        <!-- Folder Selection -->
+        <!-- Source Folder Selection -->
         <Border Grid.Row="1" Padding="20" Background="#ECF0F1">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -32,7 +33,7 @@
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0" 
-                           Text="Folder:" 
+                           Text="Source:" 
                            VerticalAlignment="Center" 
                            FontWeight="Bold" 
                            Margin="0,0,10,0"/>
@@ -71,8 +72,59 @@
             </Grid>
         </Border>
 
-        <!-- Convert Button Row -->
-        <Border Grid.Row="2" Padding="20" Background="#ECF0F1">
+        <!-- Target Folder Selection -->
+        <Border Grid.Row="2" Padding="20" Background="#DCE8EE">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="Target:"
+                           VerticalAlignment="Center"
+                           FontWeight="Bold"
+                           Margin="0,0,10,0"/>
+
+                <TextBox Grid.Column="1"
+                         x:Name="TargetFolderPathTextBox"
+                         VerticalAlignment="Center"
+                         Padding="8"
+                         IsReadOnly="True"
+                         FontSize="14"
+                         Background="White"/>
+
+                <Button Grid.Column="2"
+                        Content="Browse..."
+                        Click="BrowseTargetButton_Click"
+                        Padding="15,8"
+                        Margin="10,0,0,0"
+                        FontSize="14"
+                        Background="#2980B9"
+                        Foreground="White"
+                        BorderThickness="0"
+                        Cursor="Hand"/>
+
+                <Button Grid.Column="3"
+                        x:Name="CompareButton"
+                        Content="Compare"
+                        Click="CompareButton_Click"
+                        Padding="15,8"
+                        Margin="10,0,0,0"
+                        FontSize="14"
+                        FontWeight="Bold"
+                        Background="#16A085"
+                        Foreground="White"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        IsEnabled="False"/>
+            </Grid>
+        </Border>
+
+        <!-- Action Button Row -->
+        <Border Grid.Row="3" Padding="20" Background="#ECF0F1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -103,9 +155,21 @@
                             BorderThickness="0"
                             Cursor="Hand"
                             Visibility="Collapsed"/>
+                            <Button x:Name="TransferButton"
+                                Content="Transfer Selected/Missing to Target"
+                                Click="TransferButton_Click"
+                                Padding="15,10"
+                                Margin="10,0,0,0"
+                                FontSize="14"
+                                FontWeight="Bold"
+                                Background="#1F7A8C"
+                                Foreground="White"
+                                BorderThickness="0"
+                                Cursor="Hand"
+                                Visibility="Collapsed"/>
                     <TextBlock Margin="15,0,0,0"
                                VerticalAlignment="Center"
-                               Text="Rename files to follow Picard naming convention (Artist/Album/TrackNumber - Title)"
+                                   Text="Compare source vs target by metadata, then transfer selected/missing files."
                                Foreground="#555"
                                FontStyle="Italic"/>
                 </StackPanel>
@@ -121,7 +185,7 @@
         </Border>
 
         <!-- Progress Bar -->
-        <Border Grid.Row="2" Padding="20" Background="#ECF0F1" Visibility="Collapsed" x:Name="ProgressBorder">
+        <Border Grid.Row="4" Padding="20" Background="#ECF0F1" Visibility="Collapsed" x:Name="ProgressBorder">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -169,7 +233,7 @@
         </Border>
 
         <!-- Results Area -->
-        <Grid Grid.Row="4" Margin="20">
+        <Grid Grid.Row="5" Margin="20">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -244,12 +308,16 @@
                       AlternatingRowBackground="#F8F9FA"
                       GridLinesVisibility="Horizontal"
                       HeadersVisibility="Column"
-                      SelectionMode="Single"
+                      SelectionMode="Extended"
                       CanUserResizeRows="False">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200"/>
                     <DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80"/>
                     <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="100"/>
+                    <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="140"/>
+                    <DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="160"/>
+                    <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="180"/>
+                    <DataGridTextColumn Header="Compare" Binding="{Binding CompareStatus}" Width="120"/>
                     <DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="100"/>
                     <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="*" MinWidth="200"/>
                 </DataGrid.Columns>
@@ -257,9 +325,9 @@
         </Grid>
 
         <!-- Status Bar -->
-        <Border Grid.Row="5" Background="#34495E" Padding="10">
+        <Border Grid.Row="6" Background="#34495E" Padding="10">
             <TextBlock x:Name="StatusText" 
-                       Text="Ready to scan. Select a folder to begin." 
+                       Text="Ready to scan. Select source and target folders to begin." 
                        Foreground="White"
                        FontSize="12"/>
         </Border>
