@@ -1163,30 +1163,6 @@ public partial class MainWindow : Window
         AppendFfmpegLog($"\n=== Conversion ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
     }
 
-    private static bool TryDeleteWithRetry(string filePath)
-    {
-        const int maxAttempts = 3;
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            try
-            {
-                if (!File.Exists(filePath))
-                {
-                    return true;
-                }
-
-                File.Delete(filePath);
-                return true;
-            }
-            catch
-            {
-                Thread.Sleep(400);
-            }
-        }
-
-        return false;
-    }
-
     private static string FormatFileSize(long bytes)
     {
         string[] sizes = { "B", "KB", "MB", "GB", "TB" };
