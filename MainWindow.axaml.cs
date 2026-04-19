@@ -928,7 +928,7 @@ public partial class MainWindow : Window
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                FileNamer.RenameToPickardStyle(audioFile.FilePath, basePath, compilationAlbums);
+                FileNamer.RenameToPicardStyle(audioFile.FilePath, basePath, compilationAlbums);
                 filesCompleted++;
                 int percentComplete = (filesCompleted * 100) / totalFiles;
 
@@ -1118,7 +1118,7 @@ public partial class MainWindow : Window
                     string baseDirectory = string.IsNullOrWhiteSpace(_currentScanPath)
                         ? Path.GetDirectoryName(flacFile.FilePath) ?? Directory.GetCurrentDirectory()
                         : _currentScanPath;
-                    FileNamer.RenameToPickardStyle(outputPath, baseDirectory, compilationAlbums);
+                    FileNamer.RenameToPicardStyle(outputPath, baseDirectory, compilationAlbums);
                     AppendFfmpegLog("Renamed/moved converted MP3 with Picard naming.");
                 }
 
