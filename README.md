@@ -1,142 +1,151 @@
-# Audio File Analyzer & FLAC to MP3 Converter
+# Audio File Analyzer & FLAC Converter
 
-A Windows desktop application built with WPF and .NET 8 to prepare audio files for USB playback in a car head unit.
+A cross-platform desktop application built with Avalonia and .NET 10 to prepare audio files for USB playback in a car head unit.
 
 ## Goal
 
 Prepare a clean, car-friendly USB music library by:
-- Converting FLAC tracks to MP3 (320kbps)
-- Grouping albums in consistent folders
-- Renaming files in a predictable track order format
+- Scanning a source music folder and a target USB drive
+- Comparing source and target by track metadata to identify missing files
+- Transferring selected or missing tracks to the USB drive
+- Converting non-MP3/M4A formats (e.g. FLAC) to MP3 at 320kbps before copying
+- Grouping albums in consistent folders and renaming files in a predictable order
 - Cleaning up empty folders after moves
 
 ## Features
 
-- **Folder Browser**: Easy-to-use folder selection dialog
-- **Audio File Detection**: Automatically detects MP3, M4A, and FLAC files
-- **File Analysis**: Extracts file details including:
-  - File name and path
-  - File type (Audio)
-  - File size
-  - File format
-- **FLAC to MP3 Conversion**: 
-  - Converts FLAC files to MP3 with the highest quality (320kbps bitrate)
+- **Dual Folder Selection**: Separate **Source** and **Target** browse buttons
+- **Audio File Detection**: Detects MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, and ALAC files
+- **Metadata Display**: Grid shows Artist, Album, Title, Format, Size, and Compare status for each file
+- **Source/Target Comparison**:
+  - Scans both folders and matches tracks by `artist | album | title` metadata key
+  - Falls back to filename-based key when tags are incomplete
+  - Classifies each source file as **Missing**, **On target**, or **Unknown tags**
+  - Shows summary counts in the status bar after compare
+- **Smart Transfer**:
+  - Transfer **selected rows** (multi-select in the file grid) or all **Missing** files after a compare
+  - If no selection and no compare results, offers to transfer all scanned files
+  - MP3 and M4A files are copied directly (no re-encoding)
+  - Other formats trigger a single **Convert before copy?** prompt per transfer operation
+  - **Per-file conflict prompt** when a file already exists at the destination: Overwrite / Skip / Cancel transfer
+  - Preserves source folder structure under the target root
+  - Progress bar, file counter, and Stop/cancel support
+  - Transfer summary: Copied / Converted / Skipped / Failed counts
+- **FLAC to MP3 Conversion** (standalone):
+  - Converts FLAC files to MP3 at 320kbps
   - Uses FFmpeg for reliable conversion
-   - Shows real-time FFmpeg logs in a dedicated console window
-   - Supports cancellation with a Stop button
-   - Optionally deletes original FLAC files after successful conversion
+  - Shows real-time FFmpeg logs in a dedicated console window
+  - Stop button with immediate process kill
+  - Optionally deletes original FLAC files after successful conversion
 - **Picard-Style Organization**:
-   - Uses metadata to rename and move files into album folders
-   - Naming logic:
-      - Folder: `AlbumArtist/Album` (fallbacks: artist, then "Unknown Artist"; album fallback: "Singles")
-      - File: `TrackNumber - Title`
-      - Multi-disc albums: `DiscNumber-TrackNumber - Title`
-   - Keeps compilations and featured tracks together under one album artist folder
-   - Cleans up now-empty source directories
-- **Statistics Dashboard**: Real-time display of:
-  - Total files found
-  - Number of MP3 files
-  - Number of FLAC files
-  - Total size of all audio files
+  - Uses metadata to rename and move files into album folders
+  - Folder: `AlbumArtist/Album` (fallbacks: artist → "Unknown Artist"; album → "Singles")
+  - File: `TrackNumber - Title` (multi-disc: `DiscNumber-TrackNumber - Title`)
+  - Detects compilations and groups them correctly
+  - Cleans up now-empty source directories
+- **Statistics Dashboard**: Total files, MP3 count, FLAC count, total size
 - **Recursive Scanning**: Scans all subfolders within the selected directory
-- **Modern UI**: Clean, professional interface with color-coded statistics
 
 ## Supported Formats
 
-### Input Formats
-- MP3 (.mp3)
-- M4A (.m4a) - iTunes compatible
-- FLAC (.flac) - Lossless audio format (for conversion)
+### Scan & Compare (source and target)
+MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, ALAC
 
-### Output Format (Conversion)
-- MP3 (.mp3) at 320kbps (high quality, broad car stereo compatibility)
+### Direct Copy (no conversion)
+MP3 (.mp3), M4A (.m4a)
+
+### Converted to MP3 on Transfer
+FLAC, WAV, AAC, OGG, WMA, AIFF, ALAC → MP3 at 320kbps
 
 ## Prerequisites
 
-- .NET 8.0 SDK or later
-- Windows operating system
-- **FFmpeg** (required for FLAC conversion)
+- .NET 10.0 SDK or later
+- Windows or Linux
+- **FFmpeg** — required only when converting non-MP3/M4A files
   - Download from: https://ffmpeg.org/download.html
-  - Make sure FFmpeg is in your system PATH
+  - Make sure `ffmpeg` is in your system PATH
 
-## Building the Application
+## Building & Running
 
-1. Open a terminal in the project directory
-2. Restore dependencies:
-   ```
-   dotnet restore
-   ```
-3. Build the project:
-   ```
-   dotnet build
-   ```
-4. Run the application:
-   ```
-   dotnet run
-   ```
+```bash
+dotnet restore
+dotnet build
+dotnet run
+```
 
 ## How to Use
 
-1. Launch the application
-2. Click the **Browse...** button to select a folder containing audio files
-3. Click the **Scan** button to analyze the audio files
-4. The application will:
-   - Display all found audio files (MP3, M4A, FLAC)
-   - Show count of each file type
-   - Display total size of all files
-5. If FLAC files are found:
-   - Click **"Convert FLAC to MP3 (320kbps)"**
-   - Follow progress in the progress bar and FFmpeg log window
-   - Converted files are organized using Picard-style album structure
-6. Use **Rename** to apply the same organization to already compatible files
+### Basic scan & convert (existing workflow)
+1. Click **Source Browse...** and select your music folder
+2. Click **Scan**
+3. If FLAC files are found, click **Convert FLAC to MP3 (320kbps)**
+4. Use **Rename All Files (Picard)** to organize files into `Artist/Album/Track - Title` structure
+
+### Transfer to USB (new workflow)
+1. Click **Source Browse...** → select your music library folder → **Scan**
+2. Click **Target Browse...** → select the USB drive (or any destination folder)
+3. Click **Compare** to see which source tracks are missing on the target
+4. The **Compare** column in the grid updates to *Missing*, *On target*, or *Unknown tags*
+5. Optionally select specific rows (Ctrl+click / Shift+click) to transfer a subset
+6. Click **Transfer Selected/Missing to Target**
+7. If unsupported formats are included, choose **Yes** (convert to MP3) or **No** (skip them)
+8. Resolve any file conflicts per-file: **Yes** overwrite, **No** skip, **Cancel** stop transfer
+9. A summary dialog reports Copied / Converted / Skipped / Failed counts
 
 ## Installation Notes
 
-### Installing FFmpeg (Required)
+### FFmpeg on Linux
+```bash
+sudo apt install ffmpeg        # Debian/Ubuntu
+sudo dnf install ffmpeg        # Fedora
+sudo pacman -S ffmpeg          # Arch
+```
 
-**Windows:**
-- Option 1: Download from https://ffmpeg.org/download.html
-- Option 2: Use Chocolatey: `choco install ffmpeg`
-- Option 3: Use Windows Package Manager: `winget install FFmpeg`
-
-Make sure FFmpeg is added to your system PATH so the application can find it.
+### FFmpeg on Windows
+```powershell
+winget install FFmpeg
+# or
+choco install ffmpeg
+```
 
 ## Project Structure
 
-- `MainWindow.xaml` - UI definition
-- `MainWindow.xaml.cs` - Scan, convert, rename, progress, cancellation, and deletion workflow
-- `FileNamer.cs` - Picard-style naming and empty-folder cleanup
-- `FfmpegConsoleWindow.xaml` / `FfmpegConsoleWindow.xaml.cs` - Real-time FFmpeg log viewer
-- `MediaAnalyzer.cs` - Audio file analysis functionality
-- `App.xaml` / `App.xaml.cs` - Application entry point
-- `MediaFileAnalyzer.csproj` - Project configuration
+- `MainWindow.axaml` / `MainWindow.axaml.cs` — UI and all scan, compare, transfer, convert, rename workflows
+- `FileNamer.cs` — Picard-style naming, compilation detection, empty-folder cleanup
+- `FfmpegConsoleWindow.axaml` / `FfmpegConsoleWindow.axaml.cs` — Real-time FFmpeg log viewer
+- `MediaAnalyzer.cs` — Audio file analysis
+- `App.axaml` / `App.xaml.cs` — Application entry point
+- `MediaFileAnalyzer.csproj` — Project configuration (net10.0, Avalonia)
 
 ## Conversion Details
 
 - **Quality**: 320kbps (maximum MP3 quality)
 - **Codec**: MP3 (MPEG-1 Layer 3)
-- **Audio Processing**: Automatic metadata preservation
-- **Parallel Processing**: Not used (sequential conversion to ensure stability)
+- **Metadata**: Preserved from source file by FFmpeg
+- **Processing**: Sequential (one file at a time for stability and cancellability)
 
 ## Car USB Tips
 
 - Format USB drives as `FAT32` (or `exFAT` if your car supports it)
-- Keep folder depth short and filenames simple
-- Prefer ID3v2.3-compatible tags when possible for older head units
-- Test with a small sample set before copying your full library
+- Keep folder depth reasonable and filenames simple
+- Prefer ID3v2.3-compatible tags for older head units
+- Run **Compare** first to only transfer what's actually missing
 
 ## Troubleshooting
 
 ### FFmpeg not found
-- Make sure FFmpeg is installed
-- Check that FFmpeg is in your system PATH
-- Restart the application after installing FFmpeg
-- A browser window will open to FFmpeg download page if not detected
+- Ensure FFmpeg is installed and `ffmpeg -version` works in a terminal
+- The app will warn you before attempting any conversion
 
-### Conversion fails
-- Verify FFmpeg is installed and accessible from command line: `ffmpeg -version`
-- Check that you have write permissions in the target folder
-- Ensure sufficient disk space for MP3 files
+### Compare shows everything as "Unknown tags"
+- Your source files may have missing or incomplete ID3/metadata tags
+- Use a tag editor (e.g. MusicBrainz Picard, beets) to add Artist, Album, and Title tags
+- Files with unknown tags still appear in the grid and can be selected for transfer manually
+
+### Transfer fails or shows errors
+- Check write permissions on the target folder/USB drive
+- Ensure sufficient free space on the target
+- Review the FFmpeg console window for conversion-specific errors
 
 ## License
 
