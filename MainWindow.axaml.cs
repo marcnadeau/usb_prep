@@ -360,22 +360,27 @@ public partial class MainWindow : Window
 
             int percent = (processed * 100) / Math.Max(1, total);
             string capturedFile = mediaFile.FileName;
+            string capturedStatus = status;
             Dispatcher.UIThread.Post(() =>
             {
-                mediaFile.CompareStatus = status;
+                mediaFile.CompareStatus = capturedStatus;
                 var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
                 var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
                 var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
                 if (conversionProgressBar != null) conversionProgressBar.Value = percent;
                 if (progressCountText != null) progressCountText.Text = $"{processed}/{total}";
                 if (currentFileText != null) currentFileText.Text = capturedFile;
-                if (_filesDataGrid != null)
-                {
-                    _filesDataGrid.ItemsSource = null;
-                    _filesDataGrid.ItemsSource = _mediaFiles;
-                }
             });
         }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_filesDataGrid != null)
+            {
+                _filesDataGrid.ItemsSource = null;
+                _filesDataGrid.ItemsSource = _mediaFiles;
+            }
+        });
 
         return new CompareResult(missing, alreadyOnTarget, unknown);
     }
@@ -579,7 +584,7 @@ public partial class MainWindow : Window
             FileName = "ffmpeg",
             Arguments = arguments,
             UseShellExecute = false,
-            RedirectStandardOutput = true,
+            RedirectStandardOutput = false,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
@@ -595,7 +600,6 @@ public partial class MainWindow : Window
                 AppendFfmpegLog(eventArgs.Data);
         };
 
-        process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         process.WaitForExit();
         cancellationToken.ThrowIfCancellationRequested();
