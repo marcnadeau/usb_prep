@@ -114,7 +114,7 @@ choco install ffmpeg
 - `FileNamer.cs` — Picard-style naming, compilation detection, empty-folder cleanup
 - `FfmpegConsoleWindow.axaml` / `FfmpegConsoleWindow.axaml.cs` — Real-time FFmpeg log viewer
 - `MediaAnalyzer.cs` — Audio file analysis
-- `App.axaml` / `App.xaml.cs` — Application entry point
+- `App.axaml` / `App.axaml.cs` — Application entry point
 - `MediaFileAnalyzer.csproj` — Project configuration (net10.0, Avalonia)
 
 ## Conversion Details
