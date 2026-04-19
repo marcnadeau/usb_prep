@@ -1,0 +1,79 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MediaFileAnalyzer.FfmpegConsoleWindow"
+        Title="FFmpeg Output"
+        Height="500"
+        Width="900"
+        WindowStartupLocation="CenterOwner">
+        <Window.Styles>
+                <Style Selector="TextBox#ConsoleTextBox">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:pointerover">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus-within">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox /template/ Border">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:pointerover /template/ Border">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus /template/ Border">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="BorderBrush" Value="#2A2A2A" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox /template/ ScrollViewer">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:pointerover /template/ ScrollViewer">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                </Style>
+                <Style Selector="TextBox#ConsoleTextBox:focus /template/ ScrollViewer">
+                        <Setter Property="Background" Value="#111111" />
+                        <Setter Property="Foreground" Value="#E6E6E6" />
+                </Style>
+        </Window.Styles>
+  <Grid Margin="10" RowDefinitions="*,Auto">
+    <TextBox Name="ConsoleTextBox"
+             Grid.Row="0"
+             IsReadOnly="True"
+             TextWrapping="NoWrap"
+             ScrollViewer.VerticalScrollBarVisibility="Auto"
+             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+             FontFamily="Consolas"
+             FontSize="12"
+             Background="#111111"
+             Foreground="#E6E6E6" />
+
+    <StackPanel Grid.Row="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="8"
+                Margin="0,8,0,0">
+      <Button Content="Clear"
+              Click="ClearButton_Click"
+              Padding="10,4" />
+      <Button Content="Close"
+              Click="CloseButton_Click"
+              Padding="10,4" />
+    </StackPanel>
+  </Grid>
+</Window>
