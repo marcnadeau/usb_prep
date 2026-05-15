@@ -17,7 +17,7 @@ namespace MediaFileAnalyzer
         /// </summary>
         public static HashSet<string> DetectCompilationAlbums(IEnumerable<string> filePaths)
         {
-            // album name -> list of (trackArtist, albumArtist)
+            // normalized album name -> list of (trackArtist, albumArtist)
             var albumGroups = new Dictionary<string, List<(string trackArtist, string albumArtist)>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var filePath in filePaths)
@@ -27,13 +27,14 @@ namespace MediaFileAnalyzer
                     using var audioFile = TagLib.File.Create(filePath);
                     var tag = audioFile.Tag;
                     string album = !string.IsNullOrWhiteSpace(tag.Album) ? tag.Album : "Singles";
+                    string albumKey = NormalizeAlbumKey(album);
                     string trackArtist = tag.FirstPerformer ?? string.Empty;
                     string albumArtist = tag.FirstAlbumArtist ?? string.Empty;
 
-                    if (!albumGroups.TryGetValue(album, out var list))
+                    if (!albumGroups.TryGetValue(albumKey, out var list))
                     {
                         list = new List<(string, string)>();
-                        albumGroups[album] = list;
+                        albumGroups[albumKey] = list;
                     }
                     list.Add((trackArtist, albumArtist));
                 }
@@ -48,10 +49,13 @@ namespace MediaFileAnalyzer
             {
                 var entries = kvp.Value;
 
-                // If any file already carries an AlbumArtist the folder name is already correct.
-                bool hasAlbumArtist = entries.Any(e => !string.IsNullOrWhiteSpace(e.albumArtist));
-                if (hasAlbumArtist)
-                    continue;
+                int distinctAlbumArtists = entries
+                    .Select(e => e.albumArtist.Trim())
+                    .Where(a => !string.IsNullOrWhiteSpace(a))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+
+                bool allHaveAlbumArtist = entries.All(e => !string.IsNullOrWhiteSpace(e.albumArtist));
 
                 // Multiple distinct track artists → compilation.
                 int distinctArtists = entries
@@ -60,7 +64,10 @@ namespace MediaFileAnalyzer
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count();
 
-                if (distinctArtists > 1)
+                // Keep standard album grouping only when AlbumArtist is complete and consistent.
+                bool consistentAlbumArtist = allHaveAlbumArtist && distinctAlbumArtists == 1;
+
+                if (!consistentAlbumArtist && distinctArtists > 1)
                     compilations.Add(kvp.Key);
             }
 
@@ -85,6 +92,7 @@ namespace MediaFileAnalyzer
                     
                     // $if2(%album%,Singles) - prefer album name, fallback to "Singles"
                     string album = !string.IsNullOrWhiteSpace(tag.Album) ? tag.Album : "Singles";
+                    string albumKey = NormalizeAlbumKey(album);
 
                     // Extract artist following Picard logic:
                     //   1. Use AlbumArtist tag if present.
@@ -95,7 +103,7 @@ namespace MediaFileAnalyzer
                     {
                         artist = tag.FirstAlbumArtist;
                     }
-                    else if (compilationAlbums != null && compilationAlbums.Contains(album))
+                    else if (compilationAlbums != null && compilationAlbums.Contains(albumKey))
                     {
                         artist = "Various Artists";
                     }
@@ -280,6 +288,17 @@ namespace MediaFileAnalyzer
                 filename = filename.Replace(c.ToString(), "");
             }
             return filename.Trim();
+        }
+
+        private static string NormalizeAlbumKey(string album)
+        {
+            if (string.IsNullOrWhiteSpace(album))
+            {
+                return "singles";
+            }
+
+            return string.Join(' ', album.Trim().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                .ToLowerInvariant();
         }
     }
 }
