@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -132,63 +133,21 @@ public partial class MainWindow : Window
                 var folderPathTextBox = FolderPathTextBox ?? this.FindControl<TextBox>("FolderPathTextBox");
                 var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
 
-                var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-                {
-                    AllowMultiple = false,
-                    Title = "Select a folder to scan for audio files"
-                });
+                var selectedPath = await PickFolderWithLinuxFallbackAsync(
+                    topLevel,
+                    "Select a folder to scan for audio files");
 
-                var selectedFolder = folders.FirstOrDefault();
-                if (selectedFolder != null)
+                if (!string.IsNullOrWhiteSpace(selectedPath))
                 {
-                    var selectedPath = selectedFolder.TryGetLocalPath();
-                    
-                    // Fallback: if TryGetLocalPath() returns null/empty, try other methods
-                    if (string.IsNullOrWhiteSpace(selectedPath) && selectedFolder.Path != null)
+                    _currentScanPath = selectedPath;
+                    if (folderPathTextBox != null)
                     {
-                        selectedPath = selectedFolder.Path.LocalPath;
+                        folderPathTextBox.Text = selectedPath;
                     }
-                    
-                    // Second fallback: try FileSystemInfo.FullPath via reflection
-                    if (string.IsNullOrWhiteSpace(selectedPath))
+
+                    if (statusText != null)
                     {
-                        try
-                        {
-                            var fileSystemInfoProp = selectedFolder.GetType().GetProperty("FileSystemInfo");
-                            if (fileSystemInfoProp != null)
-                            {
-                                var fileSystemInfo = fileSystemInfoProp.GetValue(selectedFolder) as System.IO.FileSystemInfo;
-                                if (fileSystemInfo != null)
-                                {
-                                    selectedPath = fileSystemInfo.FullName;
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            // FileSystemInfo not available
-                        }
-                    }
-                    
-                    if (!string.IsNullOrWhiteSpace(selectedPath))
-                    {
-                        _currentScanPath = selectedPath;
-                        if (folderPathTextBox != null)
-                        {
-                            folderPathTextBox.Text = selectedPath;
-                        }
-                        
-                        if (statusText != null)
-                        {
-                            statusText.Text = $"Folder selected: {selectedPath}";
-                        }
-                    }
-                    else
-                    {
-                        if (statusText != null)
-                        {
-                            statusText.Text = "Could not resolve folder path. Please try typing the path manually.";
-                        }
+                        statusText.Text = $"Folder selected: {selectedPath}";
                     }
                 }
             }
@@ -216,29 +175,19 @@ public partial class MainWindow : Window
                 var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
                 var compareButton = CompareButton ?? this.FindControl<Button>("CompareButton");
 
-                var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-                {
-                    AllowMultiple = false,
-                    Title = "Select a target folder (USB drive destination)"
-                });
+                var selectedPath = await PickFolderWithLinuxFallbackAsync(
+                    topLevel,
+                    "Select a target folder (USB drive destination)");
 
-                var selectedFolder = folders.FirstOrDefault();
-                if (selectedFolder != null)
+                if (!string.IsNullOrWhiteSpace(selectedPath))
                 {
-                    var selectedPath = selectedFolder.TryGetLocalPath();
-                    if (string.IsNullOrWhiteSpace(selectedPath) && selectedFolder.Path != null)
-                        selectedPath = selectedFolder.Path.LocalPath;
-
-                    if (!string.IsNullOrWhiteSpace(selectedPath))
-                    {
-                        _targetPath = selectedPath;
-                        _hasComparisonResults = false;
-                        if (targetFolderPathTextBox != null)
-                            targetFolderPathTextBox.Text = selectedPath;
-                        if (statusText != null)
-                            statusText.Text = $"Target folder selected: {selectedPath}";
-                        UpdateActionAvailability();
-                    }
+                    _targetPath = selectedPath;
+                    _hasComparisonResults = false;
+                    if (targetFolderPathTextBox != null)
+                        targetFolderPathTextBox.Text = selectedPath;
+                    if (statusText != null)
+                        statusText.Text = $"Target folder selected: {selectedPath}";
+                    UpdateActionAvailability();
                 }
             }
             catch (Exception ex)
@@ -247,6 +196,132 @@ public partial class MainWindow : Window
                 if (statusText != null)
                     statusText.Text = $"File browser error: {ex.Message}";
             }
+        }
+    }
+
+    private async Task<string?> PickFolderWithLinuxFallbackAsync(TopLevel topLevel, string title)
+    {
+        try
+        {
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                AllowMultiple = false,
+                Title = title
+            });
+
+            var selectedFolder = folders.FirstOrDefault();
+            return selectedFolder is null ? null : ResolveFolderPath(selectedFolder);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"OpenFolderPickerAsync failed: {ex}");
+
+            // On Linux, D-Bus/portal failures can happen on some desktop setups.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                var externalPath = await PickFolderWithExternalLinuxDialogAsync(title);
+                if (!string.IsNullOrWhiteSpace(externalPath))
+                {
+                    return externalPath;
+                }
+            }
+
+            throw;
+        }
+    }
+
+    private static string? ResolveFolderPath(IStorageFolder selectedFolder)
+    {
+        var selectedPath = selectedFolder.TryGetLocalPath();
+
+        if (string.IsNullOrWhiteSpace(selectedPath) && selectedFolder.Path != null)
+        {
+            selectedPath = selectedFolder.Path.LocalPath;
+        }
+
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            try
+            {
+                var fileSystemInfoProp = selectedFolder.GetType().GetProperty("FileSystemInfo");
+                if (fileSystemInfoProp != null)
+                {
+                    var fileSystemInfo = fileSystemInfoProp.GetValue(selectedFolder) as FileSystemInfo;
+                    if (fileSystemInfo != null)
+                    {
+                        selectedPath = fileSystemInfo.FullName;
+                    }
+                }
+            }
+            catch
+            {
+                // FileSystemInfo not available for this storage provider.
+            }
+        }
+
+        return selectedPath;
+    }
+
+    private static async Task<string?> PickFolderWithExternalLinuxDialogAsync(string title)
+    {
+        var dialogs = new List<(string FileName, string[] Args)>
+        {
+            ("zenity", new[] { "--file-selection", "--directory", "--title", title }),
+            ("qarma", new[] { "--file-selection", "--directory", "--title", title }),
+            ("kdialog", new[] { "--getexistingdirectory", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), title })
+        };
+
+        foreach (var dialog in dialogs)
+        {
+            var selectedPath = await TryRunFolderDialogAsync(dialog.FileName, dialog.Args);
+            if (!string.IsNullOrWhiteSpace(selectedPath))
+            {
+                return selectedPath;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<string?> TryRunFolderDialogAsync(string fileName, string[] args)
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                }
+            };
+
+            foreach (var arg in args)
+            {
+                process.StartInfo.ArgumentList.Add(arg);
+            }
+
+            if (!process.Start())
+            {
+                return null;
+            }
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+            {
+                return null;
+            }
+
+            var selectedPath = output.Trim();
+            return Directory.Exists(selectedPath) ? selectedPath : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
