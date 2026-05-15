@@ -63,7 +63,7 @@
     </Border>
 
     <Border Grid.Row="2" Padding="20" Background="#DCE8EE">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Target:"
                    VerticalAlignment="Center"
@@ -101,6 +101,17 @@
                 Background="#16A085"
                 Foreground="White"
                 IsEnabled="False" />
+
+        <Button Grid.Column="4"
+                Name="FormatTargetAsFat32Button"
+                Content="Format as FAT32"
+                Click="FormatTargetAsFat32Button_Click"
+                Padding="15,8"
+                Margin="10,0,0,0"
+                FontSize="14"
+                FontWeight="Bold"
+                Background="#F39C12"
+                Foreground="White" />
       </Grid>
     </Border>
 

@@ -11,6 +11,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -121,6 +122,116 @@ public partial class MainWindow : Window
         }
 
         Close();
+    }
+
+    private async void FormatTargetAsFat32Button_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+        {
+            var statusTextMissing = StatusText ?? this.FindControl<TextBlock>("StatusText");
+            if (statusTextMissing != null)
+                statusTextMissing.Text = "Select a valid target path before showing formatting instructions.";
+            return;
+        }
+
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        string driveHint = Path.GetPathRoot(_targetPath) ?? _targetPath;
+        string instructions = BuildFat32Instructions(driveHint);
+
+        await ShowInformationDialogAsync("FAT32 formatting instructions", instructions);
+
+        if (statusText != null)
+            statusText.Text = "Formatting instructions displayed. Verify the disk before running commands.";
+    }
+
+    private static string BuildFat32Instructions(string driveHint)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return
+                "Windows (DiskPart)\n\n" +
+                "Warning: these commands erase the selected disk.\n\n" +
+                "1. Open Command Prompt as Administrator.\n" +
+                "2. Type: diskpart\n" +
+                "3. Type: list disk\n" +
+                "4. Identify your USB disk number carefully.\n" +
+                "5. Type: select disk N\n" +
+                "6. Type: clean\n" +
+                "7. Type: create partition primary\n" +
+                "8. Type: format fs=fat32 quick\n" +
+                "9. Type: assign\n" +
+                "10. Type: exit\n\n" +
+                $"Selected target in app: {driveHint}";
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return
+                "Linux\n\n" +
+                "Warning: these commands erase the selected disk.\n\n" +
+                "1. Open a terminal.\n" +
+                "2. Identify your USB disk: lsblk\n" +
+                "3. Unmount mounted partitions: sudo umount /dev/sdX*\n" +
+                "4. Create a new partition table and partition:\n" +
+                "   sudo parted /dev/sdX --script mklabel msdos mkpart primary fat32 1MiB 100%\n" +
+                "5. Format the new partition in FAT32:\n" +
+                "   sudo mkfs.vfat -F 32 -n USB /dev/sdX1\n\n" +
+                "Replace sdX with the correct disk (example: sdb).\n" +
+                $"Selected target in app: {driveHint}";
+        }
+
+        return
+            "FAT32 formatting instructions\n\n" +
+            "This app shows manual steps only.\n" +
+            "Use DiskPart on Windows or parted + mkfs.vfat on Linux.\n\n" +
+            $"Selected target in app: {driveHint}";
+    }
+
+    private async Task ShowInformationDialogAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 660,
+            Height = 460,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var messageText = new TextBlock
+        {
+            Text = message,
+            Margin = new Thickness(0, 0, 0, 14),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        };
+
+        var okButton = new Button
+        {
+            Content = "OK",
+            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+
+        okButton.Click += (_, _) => dialog.Close();
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children =
+            {
+                messageText,
+                okButton
+            }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+        }
+        else
+        {
+            dialog.Show();
+        }
     }
 
     private async void BrowseButton_Click(object? sender, RoutedEventArgs e)
