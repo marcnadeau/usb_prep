@@ -234,6 +234,181 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool IsLikelyUsbDrive(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(path);
+            if (string.IsNullOrWhiteSpace(root))
+                return false;
+
+            try
+            {
+                var drive = new DriveInfo(root);
+                if (drive.IsReady && drive.DriveType == DriveType.Removable)
+                    return true;
+            }
+            catch
+            {
+                // DriveInfo may fail on some platforms; fall back to path heuristics below.
+            }
+
+            // Common mount points on Linux for removable media
+            if (OperatingSystem.IsLinux())
+            {
+                if (path.StartsWith("/media/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/run/media/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> ShowConfirmDialogAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 560,
+            Height = 180,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var messageText = new TextBlock
+        {
+            Text = message,
+            Margin = new Thickness(0, 0, 0, 14),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        };
+
+        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var noButton = new Button { Content = "No", Width = 100, Margin = new Thickness(6,0) };
+        var yesButton = new Button { Content = "Yes", Width = 100, Margin = new Thickness(6,0) };
+
+        var tcs = new TaskCompletionSource<bool>();
+
+        noButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
+        yesButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+
+        buttonPanel.Children.Add(noButton);
+        buttonPanel.Children.Add(yesButton);
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children =
+            {
+                messageText,
+                buttonPanel
+            }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+        }
+        else
+        {
+            dialog.Show();
+        }
+
+        return await tcs.Task;
+    }
+
+    private async Task ReorganizeTargetAsync(string targetPath)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
+        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
+        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = "Organizing target drive...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                var audioFiles = Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+                    .Where(f => ScannableAudioExtensions.Contains(Path.GetExtension(f)))
+                    .ToList();
+
+                var compilationAlbums = FileNamer.DetectCompilationAlbums(audioFiles);
+
+                int total = audioFiles.Count;
+                int processed = 0;
+
+                foreach (var file in audioFiles)
+                {
+                    _operationCts.Token.ThrowIfCancellationRequested();
+                    processed++;
+                    FileNamer.RenameToPicardStyle(file, targetPath, compilationAlbums);
+
+                    int percent = (processed * 100) / Math.Max(1, total);
+                    string current = Path.GetFileName(file);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (conversionProgressBar != null) conversionProgressBar.Value = percent;
+                        if (progressCountText != null) progressCountText.Text = $"{processed}/{total}";
+                        if (currentFileText != null) currentFileText.Text = current;
+                    });
+                }
+            }, _operationCts.Token);
+
+            if (statusText != null) statusText.Text = "Target reorganize complete.";
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = "Target reorganize canceled by user.";
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Error reorganizing target: {ex.Message}";
+        }
+        finally
+        {
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            UpdateActionAvailability();
+        }
+    }
+
+    private async void ReorganizeButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+        {
+            if (statusText != null) statusText.Text = "Please select a valid target folder before reorganizing.";
+            return;
+        }
+
+        var confirm = await ShowConfirmDialogAsync("Reorganize target drive?", "This will rename and reorganize audio files on the selected target into Artist/Album/Track layout. Continue?");
+        if (confirm)
+        {
+            await ReorganizeTargetAsync(_targetPath);
+        }
+    }
+
     private async void BrowseButton_Click(object? sender, RoutedEventArgs e)
     {
         var topLevel = TopLevel.GetTopLevel(this);
@@ -299,6 +474,20 @@ public partial class MainWindow : Window
                     if (statusText != null)
                         statusText.Text = $"Target folder selected: {selectedPath}";
                     UpdateActionAvailability();
+
+                    bool isLikelyUsb = IsLikelyUsbDrive(selectedPath);
+                    if (isLikelyUsb)
+                    {
+                        var confirm = await ShowConfirmDialogAsync(
+                            "Organize target drive?",
+                            "This will reorganize and rename audio files on the selected drive into a Picard-style Artist/Album/Track structure for better playback. Continue?");
+
+                        if (confirm)
+                        {
+                            // Start reorganize in background
+                            await ReorganizeTargetAsync(selectedPath);
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -606,6 +795,20 @@ public partial class MainWindow : Window
         var candidates = selectedFiles.Count > 0
             ? selectedFiles
             : _mediaFiles.Where(m => string.Equals(m.CompareStatus, "Missing", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        // If the user hasn't run a compare, warn them before proceeding.
+        if (!_hasComparisonResults)
+        {
+            var proceed = await ShowConfirmDialogAsync(
+                "No compare results",
+                "You haven't compared the source and target. Proceeding may copy duplicates or unnecessary files. Continue?");
+
+            if (!proceed)
+            {
+                if (statusText != null) statusText.Text = "Transfer canceled — run Compare first.";
+                return;
+            }
+        }
 
         if (candidates.Count == 0)
         {

@@ -63,7 +63,7 @@
     </Border>
 
     <Border Grid.Row="2" Padding="20" Background="#DCE8EE">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Target:"
                    VerticalAlignment="Center"
@@ -103,15 +103,26 @@
                 IsEnabled="False" />
 
         <Button Grid.Column="4"
-                Name="FormatTargetAsFat32Button"
-                Content="Format as FAT32"
-                Click="FormatTargetAsFat32Button_Click"
-                Padding="15,8"
-                Margin="10,0,0,0"
-                FontSize="14"
-                FontWeight="Bold"
-                Background="#F39C12"
-                Foreground="White" />
+          Name="FormatTargetAsFat32Button"
+          Content="Format as FAT32"
+          Click="FormatTargetAsFat32Button_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          FontWeight="Bold"
+          Background="#F39C12"
+          Foreground="White" />
+
+        <Button Grid.Column="5"
+          Name="ReorganizeTargetButton"
+          Content="Reorganize Target"
+          Click="ReorganizeButton_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          FontWeight="Bold"
+          Background="#8E44AD"
+          Foreground="White" />
       </Grid>
     </Border>
 
