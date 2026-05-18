@@ -353,7 +353,7 @@ public partial class MainWindow : Window
 
                 var compilationAlbums = FileNamer.DetectCompilationAlbums(audioFiles);
 
-                int total = audioFiles.Count;
+                int total = audioFiles.Count * 2;
                 int processed = 0;
 
                 foreach (var file in audioFiles)
@@ -371,6 +371,13 @@ public partial class MainWindow : Window
                         if (currentFileText != null) currentFileText.Text = current;
                     });
                 }
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (progressStatusText != null) progressStatusText.Text = "Rewriting physical order on target...";
+                });
+
+                RewritePhysicalOrderOnTarget(targetPath, ref processed, total, progressCountText, conversionProgressBar, currentFileText, _operationCts.Token);
             }, _operationCts.Token);
 
             if (statusText != null) statusText.Text = "Target reorganize complete.";
@@ -393,6 +400,93 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RewritePhysicalOrderOnTarget(
+        string targetPath,
+        ref int processed,
+        int total,
+        TextBlock? progressCountText,
+        ProgressBar? conversionProgressBar,
+        TextBlock? currentFileText,
+        CancellationToken cancellationToken)
+    {
+        string tempRoot = Path.Combine(targetPath, $".usb_prep_rewrite_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var files = Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+                .Where(f => ScannableAudioExtensions.Contains(Path.GetExtension(f)))
+                .ToList();
+
+            var byDirectory = files
+                .GroupBy(f => Path.GetDirectoryName(f) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var group in byDirectory)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var orderedFiles = group
+                    .Select(path =>
+                    {
+                        var (disc, track) = ReadTrackPositionForOrdering(path, Path.GetFileName(path));
+                        return new
+                        {
+                            Path = path,
+                            Disc = disc,
+                            Track = track,
+                            Name = Path.GetFileName(path)
+                        };
+                    })
+                    .OrderBy(x => x.Disc)
+                    .ThenBy(x => x.Track)
+                    .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var moved = new List<(string TempPath, string DestinationPath, string DisplayName)>();
+                foreach (var item in orderedFiles)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string tempPath = Path.Combine(tempRoot, $"{Guid.NewGuid():N}{Path.GetExtension(item.Path)}");
+                    File.Move(item.Path, tempPath);
+                    moved.Add((tempPath, item.Path, item.Name));
+                }
+
+                foreach (var item in moved)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Move(item.TempPath, item.DestinationPath, overwrite: true);
+
+                    processed++;
+                    int capturedProcessed = processed;
+                    string display = item.DisplayName;
+                    int percent = (capturedProcessed * 100) / Math.Max(1, total);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (conversionProgressBar != null) conversionProgressBar.Value = percent;
+                        if (progressCountText != null) progressCountText.Text = $"{capturedProcessed}/{total}";
+                        if (currentFileText != null) currentFileText.Text = display;
+                    });
+                }
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                try
+                {
+                    Directory.Delete(tempRoot, recursive: true);
+                }
+                catch
+                {
+                    // Best-effort cleanup only.
+                }
+            }
+        }
+    }
+
     private async void ReorganizeButton_Click(object? sender, RoutedEventArgs e)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
@@ -406,6 +500,282 @@ public partial class MainWindow : Window
         if (confirm)
         {
             await ReorganizeTargetAsync(_targetPath);
+        }
+    }
+
+    private async void CleanTargetDuplicatesButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
+        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
+        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
+
+        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+        {
+            if (statusText != null) statusText.Text = "Please select a valid target folder before cleaning duplicates.";
+            return;
+        }
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = "Scanning target for duplicates...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+        if (progressCountText != null) progressCountText.Text = string.Empty;
+
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+
+        List<string> filesToDelete;
+        try
+        {
+            filesToDelete = await Task.Run(() => BuildTargetDuplicateDeleteList(_targetPath, _operationCts.Token), _operationCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = "Duplicate scan canceled by user.";
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            return;
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Error scanning duplicates: {ex.Message}";
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            return;
+        }
+
+        if (progressBorder != null) progressBorder.IsVisible = false;
+        if (stopButton != null) stopButton.IsVisible = false;
+
+        if (filesToDelete.Count == 0)
+        {
+            if (statusText != null) statusText.Text = "No duplicates found on target.";
+            _operationCts?.Dispose();
+            _operationCts = null;
+            return;
+        }
+
+        bool confirmed = await ShowDuplicateCleanupPreviewDialogAsync(filesToDelete);
+        if (!confirmed)
+        {
+            if (statusText != null) statusText.Text = "Duplicate cleanup canceled.";
+            _operationCts?.Dispose();
+            _operationCts = null;
+            return;
+        }
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = "Deleting duplicate files from target...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+
+        int deleted = 0;
+        int failed = 0;
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                int total = filesToDelete.Count;
+                for (int i = 0; i < total; i++)
+                {
+                    _operationCts?.Token.ThrowIfCancellationRequested();
+                    string file = filesToDelete[i];
+
+                    try
+                    {
+                        if (File.Exists(file))
+                        {
+                            string? sourceDirectory = Path.GetDirectoryName(file);
+                            File.Delete(file);
+                            deleted++;
+
+                            if (!string.IsNullOrWhiteSpace(sourceDirectory))
+                            {
+                                // Keep target tidy by removing empty folders where possible.
+                                CleanupDirectoryIfEmptyRecursive(sourceDirectory, _targetPath);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+
+                    int index = i;
+                    int percent = ((index + 1) * 100) / Math.Max(1, total);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (conversionProgressBar != null) conversionProgressBar.Value = percent;
+                        if (progressCountText != null) progressCountText.Text = $"{index + 1}/{total}";
+                        if (currentFileText != null) currentFileText.Text = Path.GetFileName(file);
+                    });
+                }
+            }, _operationCts!.Token);
+
+            if (statusText != null) statusText.Text = $"Duplicate cleanup complete. Deleted: {deleted}, Failed: {failed}.";
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = $"Duplicate cleanup stopped. Deleted: {deleted}, Failed: {failed}.";
+        }
+        finally
+        {
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            UpdateActionAvailability();
+        }
+    }
+
+    private List<string> BuildTargetDuplicateDeleteList(string basePath, CancellationToken cancellationToken)
+    {
+        var duplicateGroups = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var files = Directory.GetFiles(basePath, "*.*", SearchOption.AllDirectories)
+            .Where(f => ScannableAudioExtensions.Contains(Path.GetExtension(f)))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        for (int i = 0; i < files.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string file = files[i];
+            var metadata = ReadTrackMetadata(file);
+            var key = BuildTrackKey(metadata.Artist, metadata.Album, metadata.Title, Path.GetFileName(file));
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+
+            if (!duplicateGroups.TryGetValue(key, out var list))
+            {
+                list = new List<string>();
+                duplicateGroups[key] = list;
+            }
+
+            list.Add(file);
+        }
+
+        var filesToDelete = new List<string>();
+        foreach (var group in duplicateGroups.Values)
+        {
+            if (group.Count <= 1)
+                continue;
+
+            // Keep the shortest path (usually the cleanest/organized location), delete the others.
+            var ordered = group
+                .OrderBy(p => p.Length)
+                .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            filesToDelete.AddRange(ordered.Skip(1));
+        }
+
+        return filesToDelete;
+    }
+
+    private async Task<bool> ShowDuplicateCleanupPreviewDialogAsync(List<string> filesToDelete)
+    {
+        const int previewLimit = 40;
+        var previewEntries = filesToDelete.Take(previewLimit).Select(p => p).ToList();
+        string previewText = string.Join(Environment.NewLine, previewEntries);
+        if (filesToDelete.Count > previewLimit)
+        {
+            previewText += Environment.NewLine + Environment.NewLine + $"... and {filesToDelete.Count - previewLimit} more file(s).";
+        }
+
+        var dialog = new Window
+        {
+            Title = "Duplicate cleanup preview",
+            Width = 840,
+            Height = 520,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = true
+        };
+
+        var intro = new TextBlock
+        {
+            Text = $"{filesToDelete.Count} duplicate file(s) found on target. The files listed below will be deleted. Continue?",
+            Margin = new Thickness(0, 0, 0, 10),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        };
+
+        var previewBox = new TextBox
+        {
+            Text = previewText,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            Height = 360,
+            FontFamily = new Avalonia.Media.FontFamily("monospace")
+        };
+
+        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+        var cancelButton = new Button { Content = "Cancel", Width = 120, Margin = new Thickness(6, 0) };
+        var deleteButton = new Button { Content = "Delete duplicates", Width = 160, Margin = new Thickness(6, 0) };
+
+        var tcs = new TaskCompletionSource<bool>();
+        cancelButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
+        deleteButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+
+        buttonPanel.Children.Add(cancelButton);
+        buttonPanel.Children.Add(deleteButton);
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children =
+            {
+                intro,
+                previewBox,
+                buttonPanel
+            }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+        }
+        else
+        {
+            dialog.Show();
+        }
+
+        return await tcs.Task;
+    }
+
+    private static void CleanupDirectoryIfEmptyRecursive(string startDirectory, string stopAtDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(startDirectory) || string.IsNullOrWhiteSpace(stopAtDirectory))
+            return;
+
+        string current = Path.GetFullPath(startDirectory);
+        string stopAt = Path.GetFullPath(stopAtDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        while (current.StartsWith(stopAt, StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(current, stopAt, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Directory.Exists(current))
+                break;
+
+            bool hasFiles = Directory.EnumerateFiles(current).Any();
+            bool hasDirectories = Directory.EnumerateDirectories(current).Any();
+            if (hasFiles || hasDirectories)
+                break;
+
+            Directory.Delete(current, recursive: false);
+            var parent = Directory.GetParent(current);
+            if (parent == null)
+                break;
+            current = parent.FullName;
         }
     }
 
@@ -677,7 +1047,7 @@ public partial class MainWindow : Window
             if (stopButton != null) stopButton.IsVisible = false;
             _hasComparisonResults = true;
             if (statusText != null)
-                statusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}.";
+                statusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}, duplicates on target: {result.DuplicateOnTargetCount}, duplicates in source: {result.DuplicateInSourceCount}.";
             var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
             if (transferButton != null) transferButton.IsVisible = true;
         }
@@ -702,12 +1072,14 @@ public partial class MainWindow : Window
 
     private CompareResult CompareSourceAndTarget(CancellationToken cancellationToken)
     {
-        var targetKeys = BuildMetadataKeySet(_targetPath, cancellationToken);
+        var (targetKeys, duplicateOnTargetCount) = BuildMetadataKeySetWithDuplicateCount(_targetPath, cancellationToken);
         int total = _mediaFiles.Count;
         int processed = 0;
         int missing = 0;
         int alreadyOnTarget = 0;
         int unknown = 0;
+        int duplicateInSource = 0;
+        var seenSourceKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var mediaFile in _mediaFiles)
         {
@@ -721,6 +1093,11 @@ public partial class MainWindow : Window
             {
                 unknown++;
                 status = "Unknown tags";
+            }
+            else if (!seenSourceKeys.Add(key))
+            {
+                duplicateInSource++;
+                status = "Duplicate in source";
             }
             else if (targetKeys.Contains(key))
             {
@@ -757,7 +1134,32 @@ public partial class MainWindow : Window
             }
         });
 
-        return new CompareResult(missing, alreadyOnTarget, unknown);
+        return new CompareResult(missing, alreadyOnTarget, unknown, duplicateOnTargetCount, duplicateInSource);
+    }
+
+    private (HashSet<string> Keys, int DuplicateCount) BuildMetadataKeySetWithDuplicateCount(string basePath, CancellationToken cancellationToken)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int duplicateCount = 0;
+        var files = Directory.GetFiles(basePath, "*.*", SearchOption.AllDirectories);
+
+        foreach (var file in files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var extension = Path.GetExtension(file);
+            if (!ScannableAudioExtensions.Contains(extension))
+                continue;
+
+            var metadata = ReadTrackMetadata(file);
+            var key = BuildTrackKey(metadata.Artist, metadata.Album, metadata.Title, Path.GetFileName(file));
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+
+            if (!keys.Add(key))
+                duplicateCount++;
+        }
+
+        return (keys, duplicateCount);
     }
 
     private HashSet<string> BuildMetadataKeySet(string basePath, CancellationToken cancellationToken)
@@ -828,6 +1230,8 @@ public partial class MainWindow : Window
         if (hasUnsupported && FFmpegHelper.IsFFmpegInstalled())
             convertUnsupported = true;
 
+        candidates = OrderCandidatesForPhysicalWrite(candidates);
+
         var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
         var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
         var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
@@ -895,10 +1299,97 @@ public partial class MainWindow : Window
         return result;
     }
 
+    private List<MediaFileInfo> OrderCandidatesForPhysicalWrite(List<MediaFileInfo> candidates)
+    {
+        var prepared = new List<(MediaFileInfo Media, string DestinationRelative, string DestinationDirectory, int Disc, int Track, int OriginalIndex)>();
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            var media = candidates[i];
+            string extension = Path.GetExtension(media.FilePath).ToLowerInvariant();
+            string relativePath = Path.GetRelativePath(_currentScanPath, media.FilePath);
+            string destinationRelative = SupportedAudioExtensions.Contains(extension)
+                ? relativePath
+                : Path.ChangeExtension(relativePath, ".mp3");
+            string destinationDirectory = Path.GetDirectoryName(destinationRelative) ?? string.Empty;
+
+            var (disc, track) = ReadTrackPositionForOrdering(media.FilePath, media.FileName);
+            prepared.Add((media, destinationRelative, destinationDirectory, disc, track, i));
+        }
+
+        return prepared
+            .OrderBy(p => p.DestinationDirectory, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => p.Disc)
+            .ThenBy(p => p.Track)
+            .ThenBy(p => p.DestinationRelative, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => p.OriginalIndex)
+            .Select(p => p.Media)
+            .ToList();
+    }
+
+    private (int Disc, int Track) ReadTrackPositionForOrdering(string filePath, string fileName)
+    {
+        try
+        {
+            using var tagFile = TagLib.File.Create(filePath);
+            uint disc = tagFile.Tag.Disc;
+            uint track = tagFile.Tag.Track;
+
+            if (disc > 0 || track > 0)
+            {
+                int discValue = disc > 0 ? (int)disc : int.MaxValue;
+                int trackValue = track > 0 ? (int)track : int.MaxValue;
+                return (discValue, trackValue);
+            }
+        }
+        catch
+        {
+            // Fall back to filename-based ordering if tags are unreadable.
+        }
+
+        return ParseTrackPositionFromFileName(fileName);
+    }
+
+    private static (int Disc, int Track) ParseTrackPositionFromFileName(string fileName)
+    {
+        string name = Path.GetFileNameWithoutExtension(fileName).Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return (int.MaxValue, int.MaxValue);
+
+        int index = 0;
+        while (index < name.Length && char.IsDigit(name[index]))
+            index++;
+
+        if (index == 0)
+            return (int.MaxValue, int.MaxValue);
+
+        if (!int.TryParse(name[..index], out int first) || first <= 0)
+            return (int.MaxValue, int.MaxValue);
+
+        int tail = index;
+        while (tail < name.Length && (name[tail] == ' ' || name[tail] == '-' || name[tail] == '_' || name[tail] == '.'))
+            tail++;
+
+        if (index < name.Length && name[index] == '-' && tail < name.Length)
+        {
+            int secondStart = tail;
+            int secondEnd = secondStart;
+            while (secondEnd < name.Length && char.IsDigit(name[secondEnd]))
+                secondEnd++;
+
+            if (secondEnd > secondStart && int.TryParse(name[secondStart..secondEnd], out int second) && second > 0)
+                return (first, second);
+        }
+
+        return (int.MaxValue, first);
+    }
+
     private TransferSummary TransferFiles(List<MediaFileInfo> candidates, bool convertUnsupported, CancellationToken cancellationToken)
     {
         int copied = 0, converted = 0, skipped = 0, failed = 0;
         int total = candidates.Count;
+        var targetKeys = BuildMetadataKeySet(_targetPath, cancellationToken);
+        var pendingTransferKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (int i = 0; i < candidates.Count; i++)
         {
@@ -909,6 +1400,17 @@ public partial class MainWindow : Window
             {
                 string extension = Path.GetExtension(media.FilePath).ToLowerInvariant();
                 bool directCopy = SupportedAudioExtensions.Contains(extension);
+
+                var metadata = ReadTrackMetadata(media.FilePath);
+                var metadataKey = BuildTrackKey(metadata.Artist, metadata.Album, metadata.Title, media.FileName);
+                if (!string.IsNullOrWhiteSpace(metadataKey))
+                {
+                    if (targetKeys.Contains(metadataKey) || pendingTransferKeys.Contains(metadataKey))
+                    {
+                        skipped++;
+                        continue;
+                    }
+                }
 
                 if (!directCopy && !convertUnsupported)
                 {
@@ -926,15 +1428,25 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrWhiteSpace(destinationDirectory))
                     Directory.CreateDirectory(destinationDirectory);
 
+                // Recreate files in transfer order so FAT entry order follows track numbering.
+                if (File.Exists(destinationPath))
+                    File.Delete(destinationPath);
+
                 if (directCopy)
                 {
-                    File.Copy(media.FilePath, destinationPath, overwrite: true);
+                    File.Copy(media.FilePath, destinationPath, overwrite: false);
                     copied++;
                 }
                 else
                 {
                     ConvertFileToMp3(media.FilePath, destinationPath, cancellationToken);
                     converted++;
+                }
+
+                if (!string.IsNullOrWhiteSpace(metadataKey))
+                {
+                    targetKeys.Add(metadataKey);
+                    pendingTransferKeys.Add(metadataKey);
                 }
             }
             catch (OperationCanceledException)
@@ -1101,6 +1613,8 @@ public partial class MainWindow : Window
             if (convertButton != null) convertButton.IsVisible = flacCount > 0;
             if (renameButton != null) renameButton.IsVisible = totalFiles > 0;
             UpdateActionAvailability();
+                var tagViaMbButton = this.FindControl<Button>("TagViaMusicBrainzButton");
+                if (tagViaMbButton != null) tagViaMbButton.IsVisible = totalFiles > 0;
 
             // Detect compilation albums in the background (reads tags for grouping).
             var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
@@ -1566,6 +2080,185 @@ public partial class MainWindow : Window
 
         return $"{len:0.##} {sizes[order]}";
     }
+
+    private async void TagViaMusicBrainzButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+
+        if (_mediaFiles.Count == 0)
+        {
+            if (statusText != null) statusText.Text = "Scan a source folder first.";
+            return;
+        }
+
+        var apiKey = MusicBrainzTagger.LoadApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            apiKey = await ShowApiKeyDialogAsync();
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                if (statusText != null) statusText.Text = "AcoustID API key required — get a free key at acoustid.org/login.";
+                return;
+            }
+            MusicBrainzTagger.SaveApiKey(apiKey);
+        }
+
+        var selectedFiles = GetSelectedMediaFiles();
+        var filesToTag = selectedFiles.Count > 0 ? selectedFiles : _mediaFiles.ToList();
+
+        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
+        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
+        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = "Tagging via MusicBrainz...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+        var ct = _operationCts.Token;
+
+        int tagged = 0, notFound = 0, failed = 0;
+        int total = filesToTag.Count;
+        string capturedApiKey = apiKey;
+
+        try
+        {
+            await Task.Run(async () =>
+            {
+                for (int i = 0; i < filesToTag.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var mediaFile = filesToTag[i];
+                    string capturedFile = mediaFile.FileName;
+                    int idx = i;
+
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (currentFileText != null) currentFileText.Text = capturedFile;
+                        if (progressCountText != null) progressCountText.Text = $"{idx + 1}/{total}";
+                        if (conversionProgressBar != null)
+                            conversionProgressBar.Value = ((idx + 1) * 100) / Math.Max(1, total);
+                    });
+
+                    try
+                    {
+                        var metadata = await MusicBrainzTagger.LookupAsync(
+                            mediaFile.FilePath, capturedApiKey, ct);
+
+                        if (metadata != null)
+                        {
+                            MusicBrainzTagger.ApplyTags(mediaFile.FilePath, metadata);
+                            tagged++;
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                if (!string.IsNullOrWhiteSpace(metadata.Artist)) mediaFile.Artist = metadata.Artist;
+                                if (!string.IsNullOrWhiteSpace(metadata.Album)) mediaFile.Album = metadata.Album;
+                                if (!string.IsNullOrWhiteSpace(metadata.Title)) mediaFile.Title = metadata.Title;
+                                mediaFile.CompareStatus = "Tagged";
+                            });
+                        }
+                        else
+                        {
+                            notFound++;
+                            Dispatcher.UIThread.Post(() => mediaFile.CompareStatus = "Not found");
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch
+                    {
+                        failed++;
+                        Dispatcher.UIThread.Post(() => mediaFile.CompareStatus = "Tag error");
+                    }
+                }
+            }, ct);
+
+            if (statusText != null)
+                statusText.Text = $"Tagging complete. Tagged: {tagged}, Not found: {notFound}, Failed: {failed}.";
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = $"Tagging stopped. Tagged: {tagged}, Not found: {notFound}.";
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Tagging error: {ex.Message}";
+        }
+        finally
+        {
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_filesDataGrid != null)
+                {
+                    _filesDataGrid.ItemsSource = null;
+                    _filesDataGrid.ItemsSource = _mediaFiles;
+                }
+            });
+        }
+    }
+
+    private async Task<string?> ShowApiKeyDialogAsync()
+    {
+        var dialog = new Window
+        {
+            Title = "AcoustID API Key",
+            Width = 500,
+            Height = 210,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var info = new TextBlock
+        {
+            Text = "Enter your AcoustID API key.\nGet a free key at: acoustid.org/login \u2192 My Applications \u2192 Register.",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+
+        var keyBox = new TextBox
+        {
+            PlaceholderText = "Paste your AcoustID API key here...",
+            Margin = new Thickness(0, 0, 0, 14)
+        };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+
+        var cancelBtn = new Button { Content = "Cancel", Width = 100, Margin = new Thickness(6, 0) };
+        var okBtn = new Button { Content = "OK", Width = 100, Margin = new Thickness(6, 0) };
+
+        var tcs = new TaskCompletionSource<string?>();
+        cancelBtn.Click += (_, _) => { tcs.TrySetResult(null); dialog.Close(); };
+        okBtn.Click += (_, _) => { tcs.TrySetResult(keyBox.Text?.Trim()); dialog.Close(); };
+
+        buttonPanel.Children.Add(cancelBtn);
+        buttonPanel.Children.Add(okBtn);
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children = { info, keyBox, buttonPanel }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+            await dialog.ShowDialog(owner);
+        else
+            dialog.Show();
+
+        return await tcs.Task;
+    }
 }
 
 public class MediaFileInfo
@@ -1583,7 +2276,7 @@ public class MediaFileInfo
     public string CompareStatus { get; set; } = "Not compared";
 }
 
-public record CompareResult(int MissingCount, int AlreadyOnTargetCount, int UnknownCount);
+public record CompareResult(int MissingCount, int AlreadyOnTargetCount, int UnknownCount, int DuplicateOnTargetCount, int DuplicateInSourceCount);
 public record TransferSummary(int Copied, int Converted, int Skipped, int Failed);
 
 public class ConversionProgress
@@ -1612,6 +2305,7 @@ public static class FFmpegHelper
 
             using var process = Process.Start(processInfo);
             process?.WaitForExit(3000);
+
             return process?.ExitCode == 0;
         }
         catch

@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+        xmlns:dg="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+        xmlns:local="clr-namespace:MediaFileAnalyzer"
         x:Class="MediaFileAnalyzer.MainWindow"
         Title="Audio File Analyzer &amp; FLAC Converter"
         Height="700"
@@ -38,8 +39,8 @@
                  FontSize="14"
                  Background="White"
                  Foreground="#1F2933"
-                 BorderBrush="#95A5A6"
-                 Watermark="Type or paste folder path here..." />
+           BorderBrush="#95A5A6"
+           PlaceholderText="Type or paste folder path here..." />
 
         <Button Grid.Column="2"
                 Content="Browse..."
@@ -63,7 +64,7 @@
     </Border>
 
     <Border Grid.Row="2" Padding="20" Background="#DCE8EE">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Target:"
                    VerticalAlignment="Center"
@@ -78,8 +79,8 @@
                  IsReadOnly="True"
                  Background="White"
                  Foreground="#1F2933"
-                 BorderBrush="#95A5A6"
-                 Watermark="Select target folder (USB drive)..." />
+           BorderBrush="#95A5A6"
+           PlaceholderText="Select target folder (USB drive)..." />
 
         <Button Grid.Column="2"
                 Content="Browse..."
@@ -123,6 +124,17 @@
           FontWeight="Bold"
           Background="#8E44AD"
           Foreground="White" />
+
+        <Button Grid.Column="6"
+          Name="CleanTargetDuplicatesButton"
+          Content="Clean Duplicates"
+          Click="CleanTargetDuplicatesButton_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          FontWeight="Bold"
+          Background="#C0392B"
+          Foreground="White" />
       </Grid>
     </Border>
 
@@ -156,6 +168,17 @@
                   FontSize="14"
                   FontWeight="Bold"
                   Background="#1F7A8C"
+                  Foreground="White"
+                  IsVisible="False" />
+
+
+          <Button Name="TagViaMusicBrainzButton"
+                  Content="Tag via MusicBrainz"
+                  Click="TagViaMusicBrainzButton_Click"
+                  Padding="15,10"
+                  FontSize="14"
+                  FontWeight="Bold"
+                  Background="#D35400"
                   Foreground="White"
                   IsVisible="False" />
 
@@ -264,25 +287,26 @@
         </StackPanel>
       </Border>
 
-      <d:DataGrid Grid.Row="2"
-                  x:Name="FilesDataGrid"
+      <dg:DataGrid Grid.Row="2"
+          x:Name="FilesDataGrid"
+          x:DataType="local:MediaFileInfo"
                   AutoGenerateColumns="False"
                   IsReadOnly="True"
                   HeadersVisibility="Column"
                   SelectionMode="Extended"
                    >
-        <d:DataGrid.Columns>
-          <d:DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
-          <d:DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80" />
-          <d:DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="100" />
-          <d:DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="140" />
-          <d:DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="160" />
-          <d:DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="180" />
-          <d:DataGridTextColumn Header="Compare" Binding="{Binding CompareStatus}" Width="120" />
-          <d:DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="100" />
-          <d:DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="*" MinWidth="200" />
-        </d:DataGrid.Columns>
-      </d:DataGrid>
+        <dg:DataGrid.Columns>
+          <dg:DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
+          <dg:DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80" />
+          <dg:DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="100" />
+          <dg:DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="140" />
+          <dg:DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="160" />
+          <dg:DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="180" />
+          <dg:DataGridTextColumn Header="Compare" Binding="{Binding CompareStatus}" Width="120" />
+          <dg:DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="100" />
+          <dg:DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="*" MinWidth="200" />
+        </dg:DataGrid.Columns>
+      </dg:DataGrid>
     </Grid>
 
     <Border Grid.Row="5" Background="#34495E" Padding="10">
