@@ -139,8 +139,9 @@
     </Border>
 
     <Border Grid.Row="3" Padding="20" Background="#ECF0F1">
-      <Grid ColumnDefinitions="*,Auto,Auto">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+      <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
+          <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Button Name="ConvertButton"
                   Content="Convert FLAC to MP3 (320kbps)"
                   Click="ConvertButton_Click"
@@ -191,16 +192,9 @@
                        Foreground="#333"
                        FontStyle="Italic" />
           </CheckBox>
+          </StackPanel>
 
-          <TextBlock Name="NamingHintText"
-                     VerticalAlignment="Center"
-                     Text="Compare source vs target by metadata, then transfer selected/missing files."
-                     Foreground="#555"
-                     FontStyle="Italic"
-                     IsVisible="True" />
-        </StackPanel>
-
-        <TextBlock Grid.Column="1"
+          <TextBlock Grid.Column="1"
                    Name="ProgressCountText"
                    Text=""
                    VerticalAlignment="Center"
@@ -208,7 +202,7 @@
                    FontWeight="Bold"
                    Margin="20,0,0,0" />
 
-        <Button Grid.Column="2"
+          <Button Grid.Column="2"
           Content="Quit"
           Click="QuitButton_Click"
           Padding="14,8"
@@ -217,6 +211,16 @@
           FontWeight="Bold"
           Background="#2D3436"
           Foreground="White" />
+        </Grid>
+
+        <Border Grid.Row="1" Background="#DCE8EE" Padding="10,8" CornerRadius="4">
+          <TextBlock Name="NamingHintText"
+                     VerticalAlignment="Center"
+                     Text="Compare source vs target by metadata, then transfer selected/missing files."
+                     Foreground="#555"
+                     FontStyle="Italic"
+                     IsVisible="True" />
+        </Border>
       </Grid>
     </Border>
 
