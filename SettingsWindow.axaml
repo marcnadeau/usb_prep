@@ -21,7 +21,8 @@
         <StackPanel Spacing="8">
           <TextBlock Text="Formats to keep without transcoding"
                      FontWeight="SemiBold"
-                     FontSize="15" />
+                     FontSize="15"
+                     Foreground="#1F2933" />
           <TextBlock Text="Unchecked formats will be converted using the output format below."
                      Foreground="#666"
                      TextWrapping="Wrap" />
@@ -33,12 +34,14 @@
             <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
                        Text="Output format and codec"
                        FontWeight="SemiBold"
-                       FontSize="15" />
+                       FontSize="15"
+                       Foreground="#1F2933" />
 
             <TextBlock Grid.Row="1" Grid.Column="0"
                        Text="Format"
                        VerticalAlignment="Center"
-                       FontWeight="Bold" />
+                       FontWeight="Bold"
+                       Foreground="#1F2933" />
             <ComboBox Grid.Row="1" Grid.Column="1"
                       Name="OutputFormatComboBox"
                       MinWidth="250"
@@ -47,7 +50,8 @@
             <TextBlock Grid.Row="2" Grid.Column="0"
                        Text="Codec"
                        VerticalAlignment="Center"
-                       FontWeight="Bold" />
+                       FontWeight="Bold"
+                       Foreground="#1F2933" />
             <ComboBox Grid.Row="2" Grid.Column="1"
                       Name="OutputCodecComboBox"
                       MinWidth="250" />
@@ -59,17 +63,19 @@
             <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
                        Text="Quality"
                        FontWeight="SemiBold"
-                       FontSize="15" />
+                       FontSize="15"
+                       Foreground="#1F2933" />
 
             <TextBlock Grid.Row="1" Grid.Column="0"
                        Text="Bitrate (kbps)"
                        VerticalAlignment="Center"
-                       FontWeight="Bold" />
+                       FontWeight="Bold"
+                       Foreground="#1F2933" />
             <TextBox Grid.Row="1" Grid.Column="1"
                      Name="BitrateTextBox"
                      Width="140"
                      HorizontalAlignment="Left"
-                     Watermark="320" />
+                     PlaceholderText="320" />
           </Grid>
         </Border>
 

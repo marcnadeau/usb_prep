@@ -13,6 +13,8 @@ public partial class SettingsWindow : Window
     private readonly List<CheckBox> _keepFormatCheckBoxes = new();
     private bool _fraunhoferAvailable;
 
+    public SettingsWindow() : this(new ConversionSettings()) { }
+
     public SettingsWindow(ConversionSettings settings)
     {
         _settings = settings.Clone();

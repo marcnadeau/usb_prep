@@ -86,16 +86,9 @@ public partial class MainWindow : Window
     private void RefreshConversionUi()
     {
         var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
-        var namingHintText = NamingHintText ?? this.FindControl<TextBlock>("NamingHintText");
-
         if (convertButton != null)
         {
             convertButton.Content = $"Convert FLAC to {GetOutputFormatDisplayName()} ({GetBitrateLabel()})";
-        }
-
-        if (namingHintText != null)
-        {
-            namingHintText.Text = $"Keep {GetKeepFormatsSummary()} without transcoding; convert the rest to {GetOutputFormatDisplayName()} with {GetCodecDisplayName()}.";
         }
     }
 
@@ -185,153 +178,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void FormatTargetAsFat32Button_Click(object? sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
-        {
-            var statusTextMissing = StatusText ?? this.FindControl<TextBlock>("StatusText");
-            if (statusTextMissing != null)
-                statusTextMissing.Text = "Select a valid target path before showing formatting instructions.";
-            return;
-        }
-
-        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-        string driveHint = Path.GetPathRoot(_targetPath) ?? _targetPath;
-        string instructions = BuildFat32Instructions(driveHint);
-
-        await ShowInformationDialogAsync("FAT32 formatting instructions", instructions);
-
-        if (statusText != null)
-            statusText.Text = "Formatting instructions displayed. Verify the disk before running commands.";
-    }
-
-    private static string BuildFat32Instructions(string driveHint)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return
-                "Windows (DiskPart)\n\n" +
-                "Warning: these commands erase the selected disk.\n\n" +
-                "1. Open Command Prompt as Administrator.\n" +
-                "2. Type: diskpart\n" +
-                "3. Type: list disk\n" +
-                "4. Identify your USB disk number carefully.\n" +
-                "5. Type: select disk N\n" +
-                "6. Type: clean\n" +
-                "7. Type: create partition primary\n" +
-                "8. Type: format fs=fat32 quick\n" +
-                "9. Type: assign\n" +
-                "10. Type: exit\n\n" +
-                $"Selected target in app: {driveHint}";
-        }
-
-        if (OperatingSystem.IsLinux())
-        {
-            return
-                "Linux\n\n" +
-                "Warning: these commands erase the selected disk.\n\n" +
-                "1. Open a terminal.\n" +
-                "2. Identify your USB disk: lsblk\n" +
-                "3. Unmount mounted partitions: sudo umount /dev/sdX*\n" +
-                "4. Create a new partition table and partition:\n" +
-                "   sudo parted /dev/sdX --script mklabel msdos mkpart primary fat32 1MiB 100%\n" +
-                "5. Format the new partition in FAT32:\n" +
-                "   sudo mkfs.vfat -F 32 -n USB /dev/sdX1\n\n" +
-                "Replace sdX with the correct disk (example: sdb).\n" +
-                $"Selected target in app: {driveHint}";
-        }
-
-        return
-            "FAT32 formatting instructions\n\n" +
-            "This app shows manual steps only.\n" +
-            "Use DiskPart on Windows or parted + mkfs.vfat on Linux.\n\n" +
-            $"Selected target in app: {driveHint}";
-    }
-
-    private async Task ShowInformationDialogAsync(string title, string message)
-    {
-        var dialog = new Window
-        {
-            Title = title,
-            Width = 660,
-            Height = 460,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            CanResize = false
-        };
-
-        var messageText = new TextBlock
-        {
-            Text = message,
-            Margin = new Thickness(0, 0, 0, 14),
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap
-        };
-
-        var okButton = new Button
-        {
-            Content = "OK",
-            Width = 100,
-            HorizontalAlignment = HorizontalAlignment.Right
-        };
-
-        okButton.Click += (_, _) => dialog.Close();
-
-        dialog.Content = new StackPanel
-        {
-            Margin = new Thickness(18),
-            Children =
-            {
-                messageText,
-                okButton
-            }
-        };
-
-        if (TopLevel.GetTopLevel(this) is Window owner)
-        {
-            await dialog.ShowDialog(owner);
-        }
-        else
-        {
-            dialog.Show();
-        }
-    }
-
-    private static bool IsLikelyUsbDrive(string path)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(path);
-            if (string.IsNullOrWhiteSpace(root))
-                return false;
-
-            try
-            {
-                var drive = new DriveInfo(root);
-                if (drive.IsReady && drive.DriveType == DriveType.Removable)
-                    return true;
-            }
-            catch
-            {
-                // DriveInfo may fail on some platforms; fall back to path heuristics below.
-            }
-
-            // Common mount points on Linux for removable media
-            if (OperatingSystem.IsLinux())
-            {
-                if (path.StartsWith("/media/", StringComparison.OrdinalIgnoreCase) ||
-                    path.StartsWith("/run/media/", StringComparison.OrdinalIgnoreCase) ||
-                    path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    
 
     private async Task<bool> ShowConfirmDialogAsync(string title, string message)
     {
@@ -905,20 +752,6 @@ public partial class MainWindow : Window
                     if (statusText != null)
                         statusText.Text = $"Target folder selected: {selectedPath}";
                     UpdateActionAvailability();
-
-                    bool isLikelyUsb = IsLikelyUsbDrive(selectedPath);
-                    if (isLikelyUsb)
-                    {
-                        var confirm = await ShowConfirmDialogAsync(
-                            "Organize target drive?",
-                            "This will reorganize and rename audio files on the selected drive into a Picard-style Artist/Album/Track structure for better playback. Continue?");
-
-                        if (confirm)
-                        {
-                            // Start reorganize in background
-                            await ReorganizeTargetAsync(selectedPath);
-                        }
-                    }
                 }
             }
             catch (Exception ex)
@@ -1068,7 +901,7 @@ public partial class MainWindow : Window
         if (compareButton != null)
             compareButton.IsEnabled = hasSource && hasTarget && hasFiles;
         if (transferButton != null)
-            transferButton.IsVisible = hasTarget && hasFiles;
+            transferButton.IsEnabled = hasTarget && hasFiles;
     }
 
     private async void CompareButton_Click(object? sender, RoutedEventArgs e)
@@ -1110,7 +943,7 @@ public partial class MainWindow : Window
             if (statusText != null)
                 statusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}, duplicates on target: {result.DuplicateOnTargetCount}, duplicates in source: {result.DuplicateInSourceCount}.";
             var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
-            if (transferButton != null) transferButton.IsVisible = true;
+            if (transferButton != null) transferButton.IsEnabled = true;
         }
         catch (OperationCanceledException)
         {
@@ -1623,7 +1456,6 @@ public partial class MainWindow : Window
         var videoCountText = VideoCountText ?? this.FindControl<TextBlock>("VideoCountText");
         var totalSizeText = TotalSizeText ?? this.FindControl<TextBlock>("TotalSizeText");
         var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
-        var renameButton = RenameButton ?? this.FindControl<Button>("RenameButton");
 
         string folderPath = folderPathTextBox?.Text ?? string.Empty;
 
@@ -1671,15 +1503,13 @@ public partial class MainWindow : Window
             if (videoCountText != null) videoCountText.Text = flacCount.ToString();
             if (totalSizeText != null) totalSizeText.Text = FormatFileSize(totalSize);
             if (statusText != null) statusText.Text = $"Scan complete. Found {totalFiles} audio file(s). FLAC files: {flacCount}";
-            if (convertButton != null) convertButton.IsVisible = flacCount > 0;
-            if (renameButton != null) renameButton.IsVisible = totalFiles > 0;
+            if (convertButton != null) convertButton.IsEnabled = flacCount > 0;
             UpdateActionAvailability();
                 var tagViaMbButton = this.FindControl<Button>("TagViaMusicBrainzButton");
-                if (tagViaMbButton != null) tagViaMbButton.IsVisible = totalFiles > 0;
+                if (tagViaMbButton != null) tagViaMbButton.IsEnabled = totalFiles > 0;
 
             // Detect compilation albums in the background (reads tags for grouping).
             var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
-            var namingHintText = NamingHintText ?? this.FindControl<TextBlock>("NamingHintText");
             if (totalFiles > 0)
             {
                 var allPaths = _mediaFiles.Select(f => f.FilePath).ToList();
@@ -1690,8 +1520,6 @@ public partial class MainWindow : Window
                     compilationCheckBox.IsVisible = hasCompilations;
                     compilationCheckBox.IsChecked = hasCompilations;
                 }
-                if (namingHintText != null)
-                    namingHintText.IsVisible = !hasCompilations;
                 if (hasCompilations && statusText != null)
                     statusText.Text += $" — {_detectedCompilationAlbums.Count} multi-artist album(s) detected.";
             }
@@ -1699,7 +1527,6 @@ public partial class MainWindow : Window
             {
                 _detectedCompilationAlbums.Clear();
                 if (compilationCheckBox != null) compilationCheckBox.IsVisible = false;
-                if (namingHintText != null) namingHintText.IsVisible = true;
             }
         }
         catch (Exception ex)
@@ -1797,90 +1624,7 @@ public partial class MainWindow : Window
         return results;
     }
 
-    private async void RenameButton_Click(object? sender, RoutedEventArgs e)
-    {
-        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
-        var renameButton = RenameButton ?? this.FindControl<Button>("RenameButton");
-        var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
-        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
-        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
-        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
-        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
-        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
-
-        var audioFiles = _mediaFiles.ToList();
-        if (audioFiles.Count == 0)
-        {
-            if (statusText != null) statusText.Text = "No audio files found to rename.";
-            return;
-        }
-
-        // Respect the compilation checkbox: pass the detected set only when the box is checked.
-        var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
-        IReadOnlySet<string>? compilationAlbums = (compilationCheckBox?.IsChecked == true)
-            ? _detectedCompilationAlbums
-            : null;
-
-        if (statusText != null) statusText.Text = $"Ready to rename {audioFiles.Count} file(s). Starting rename operation...";
-
-        if (progressBorder != null) progressBorder.IsVisible = true;
-        if (renameButton != null) renameButton.IsVisible = false;
-        if (convertButton != null) convertButton.IsVisible = false;
-        if (stopButton != null)
-        {
-            stopButton.IsVisible = true;
-            stopButton.IsEnabled = true;
-            stopButton.Content = "Stop";
-        }
-        if (progressCountText != null) progressCountText.Text = string.Empty;
-        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
-        _operationCts?.Dispose();
-        _operationCts = new CancellationTokenSource();
-
-        var progress = new Progress<ConversionProgress>(report =>
-        {
-            if (conversionProgressBar != null) conversionProgressBar.Value = report.PercentComplete;
-            if (progressStatusText != null) progressStatusText.Text = $"Renaming: ({report.FilesCompleted}/{report.TotalFiles})";
-            if (progressCountText != null) progressCountText.Text = $"{report.FilesCompleted}/{report.TotalFiles}";
-            if (currentFileText != null) currentFileText.Text = report.CurrentFile;
-        });
-
-        try
-        {
-            await Task.Run(() => RenameAllFiles(audioFiles, _currentScanPath, compilationAlbums, progress, _operationCts.Token));
-
-            if (conversionProgressBar != null) conversionProgressBar.Value = 100;
-            if (progressStatusText != null) progressStatusText.Text = "Renaming complete!";
-            if (statusText != null) statusText.Text = "Renaming complete. Re-scan folder to see updated file structure.";
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (renameButton != null) renameButton.IsVisible = true;
-            if (convertButton != null) convertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            if (stopButton != null) stopButton.IsVisible = false;
-        }
-        catch (OperationCanceledException)
-        {
-            if (statusText != null) statusText.Text = "Renaming stopped by user.";
-            if (progressStatusText != null) progressStatusText.Text = "Renaming stopped.";
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (renameButton != null) renameButton.IsVisible = true;
-            if (convertButton != null) convertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            if (stopButton != null) stopButton.IsVisible = false;
-        }
-        catch (Exception ex)
-        {
-            if (statusText != null) statusText.Text = $"Error during renaming: {ex.Message}";
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (renameButton != null) renameButton.IsVisible = true;
-            if (convertButton != null) convertButton.IsVisible = _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            if (stopButton != null) stopButton.IsVisible = false;
-        }
-        finally
-        {
-            _operationCts?.Dispose();
-            _operationCts = null;
-        }
-    }
+    // Rename (Picard) feature removed by user request.
 
     private void RenameAllFiles(List<MediaFileInfo> audioFiles, string basePath, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
     {
@@ -1923,7 +1667,6 @@ public partial class MainWindow : Window
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
         var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
-        var renameButton = RenameButton ?? this.FindControl<Button>("RenameButton");
         var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
         var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
         var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
@@ -1952,8 +1695,7 @@ public partial class MainWindow : Window
         if (statusText != null) statusText.Text = $"Starting conversion of {flacFiles.Count} FLAC file(s)...";
 
         if (progressBorder != null) progressBorder.IsVisible = true;
-        if (convertButton != null) convertButton.IsVisible = false;
-        if (renameButton != null) renameButton.IsVisible = false;
+        if (convertButton != null) convertButton.IsEnabled = false;
         if (stopButton != null)
         {
             stopButton.IsVisible = true;
@@ -1992,8 +1734,7 @@ public partial class MainWindow : Window
             if (progressStatusText != null) progressStatusText.Text = "Conversion complete!";
             if (statusText != null) statusText.Text = $"Conversion complete. Original FLAC files preserved. Re-scan folder to see new {GetOutputFormatDisplayName()} files.";
             if (progressBorder != null) progressBorder.IsVisible = false;
-            if (convertButton != null) convertButton.IsVisible = true;
-            if (renameButton != null) renameButton.IsVisible = true;
+            if (convertButton != null) convertButton.IsEnabled = true;
             if (stopButton != null) stopButton.IsVisible = false;
         }
         catch (OperationCanceledException)
@@ -2002,16 +1743,14 @@ public partial class MainWindow : Window
             if (statusText != null) statusText.Text = "Conversion stopped by user.";
             if (progressStatusText != null) progressStatusText.Text = "Conversion stopped.";
             if (progressBorder != null) progressBorder.IsVisible = false;
-            if (convertButton != null) convertButton.IsVisible = true;
-            if (renameButton != null) renameButton.IsVisible = true;
+            if (convertButton != null) convertButton.IsEnabled = true;
             if (stopButton != null) stopButton.IsVisible = false;
         }
         catch (Exception ex)
         {
             if (statusText != null) statusText.Text = $"Error during conversion: {ex.Message}";
             if (progressBorder != null) progressBorder.IsVisible = false;
-            if (convertButton != null) convertButton.IsVisible = true;
-            if (renameButton != null) renameButton.IsVisible = true;
+            if (convertButton != null) convertButton.IsEnabled = true;
             if (stopButton != null) stopButton.IsVisible = false;
         }
         finally

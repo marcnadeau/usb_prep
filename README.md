@@ -1,4 +1,4 @@
-# Audio File Analyzer & FLAC Converter
+# USB Music Prep
 
 A cross-platform desktop application built with Avalonia and .NET 10 to prepare audio files for USB playback in a car head unit.
 
@@ -15,8 +15,8 @@ Prepare a clean, car-friendly USB music library by:
 
 ## Features
 
-- **Dual Folder Selection**: Separate **Source** and **Target** browse buttons
-- **Conversion Settings**: Pick the keep formats, output format, codec, and bitrate from a dedicated settings window
+- **Dual Folder Selection**: Separate **Source** and **Target** browse buttons; action buttons are enabled as the workflow progresses
+- **Conversion Settings**: Pick the keep formats, output format, codec, and bitrate from the **⚙ Settings** window
 - **Audio File Detection**: Detects MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, and ALAC files
 - **Metadata Display**: Grid shows Artist, Album, Title, Format, Size, and Compare status for each file
 - **Source/Target Comparison**:
@@ -40,6 +40,7 @@ Prepare a clean, car-friendly USB music library by:
   - Shows real-time FFmpeg logs in a dedicated console window
   - Stop button with immediate process kill
   - Keeps the original FLAC files in place and renames the generated output into Picard-style folders
+- **Target Maintenance**: **Reorganize** renames and sorts audio files on the target into Artist/Album/Track layout; **Clean Dups** removes duplicate tracks detected by metadata key
 - **Picard-Style Organization**:
   - Uses metadata to rename and move files into album folders
   - Folder: `AlbumArtist/Album` (fallbacks: artist → "Unknown Artist"; album → "Singles")
@@ -78,11 +79,11 @@ dotnet run
 
 ## How to Use
 
-### Basic scan & convert (existing workflow)
+### Basic scan & convert
 1. Click **Source Browse...** and select your music folder
 2. Click **Scan**
-3. If FLAC files are found, click **Convert FLAC to ...** using the current settings
-4. Use **Rename All Files (Picard)** to organize files into `Artist/Album/Track - Title` structure
+3. If FLAC files are found, **Convert FLAC to ...** is enabled — click it to start conversion
+4. Use **Rename (Picard)** to organize files into `Artist/Album/Track - Title` structure
 
 ### Settings
 1. Click **Settings** to open the conversion settings window
@@ -97,7 +98,7 @@ dotnet run
 3. Click **Compare** to see which source tracks are missing on the target
 4. The **Compare** column in the grid updates to *Missing*, *On target*, or *Unknown tags*
 5. Optionally select specific rows (Ctrl+click / Shift+click) to transfer a subset
-6. Click **Transfer Selected/Missing to Target**
+6. Click **Transfer to Target**
 7. If unsupported formats are included, they will be transcoded using the configured output format
 8. Resolve any file conflicts per-file: **Yes** overwrite, **No** skip, **Cancel** stop transfer
 9. A summary dialog reports Copied / Converted / Skipped / Failed counts
