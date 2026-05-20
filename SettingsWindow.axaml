@@ -1,0 +1,96 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MediaFileAnalyzer.SettingsWindow"
+        Title="Conversion Settings"
+        Width="680"
+        Height="700"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="20">
+    <StackPanel Grid.Row="0" Spacing="6">
+      <TextBlock Text="Conversion Settings"
+                 FontSize="22"
+                 FontWeight="Bold" />
+      <TextBlock Text="Choose which input formats stay as-is and which ones are transcoded with FFmpeg."
+                 Foreground="#555"
+                 TextWrapping="Wrap" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="1" Margin="0,16,0,16">
+      <StackPanel Spacing="18">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Formats to keep without transcoding"
+                     FontWeight="SemiBold"
+                     FontSize="15" />
+          <TextBlock Text="Unchecked formats will be converted using the output format below."
+                     Foreground="#666"
+                     TextWrapping="Wrap" />
+          <StackPanel Name="KeepFormatsPanel" Spacing="6" />
+        </StackPanel>
+
+        <Border Background="#F6F7F8" Padding="14" CornerRadius="6">
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="12">
+            <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                       Text="Output format and codec"
+                       FontWeight="SemiBold"
+                       FontSize="15" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0"
+                       Text="Format"
+                       VerticalAlignment="Center"
+                       FontWeight="Bold" />
+            <ComboBox Grid.Row="1" Grid.Column="1"
+                      Name="OutputFormatComboBox"
+                      MinWidth="250"
+                      SelectionChanged="OutputFormatComboBox_SelectionChanged" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0"
+                       Text="Codec"
+                       VerticalAlignment="Center"
+                       FontWeight="Bold" />
+            <ComboBox Grid.Row="2" Grid.Column="1"
+                      Name="OutputCodecComboBox"
+                      MinWidth="250" />
+          </Grid>
+        </Border>
+
+        <Border Background="#F6F7F8" Padding="14" CornerRadius="6">
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="12">
+            <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                       Text="Quality"
+                       FontWeight="SemiBold"
+                       FontSize="15" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0"
+                       Text="Bitrate (kbps)"
+                       VerticalAlignment="Center"
+                       FontWeight="Bold" />
+            <TextBox Grid.Row="1" Grid.Column="1"
+                     Name="BitrateTextBox"
+                     Width="140"
+                     HorizontalAlignment="Left"
+                     Watermark="320" />
+          </Grid>
+        </Border>
+
+        <TextBlock Name="CodecAvailabilityText"
+                   Foreground="#666"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </ScrollViewer>
+
+    <StackPanel Grid.Row="2"
+                Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="10">
+      <Button Content="Cancel"
+              Width="100"
+              Click="CancelButton_Click" />
+      <Button Content="Save"
+              Width="100"
+              Background="#1F7A8C"
+              Foreground="White"
+              Click="SaveButton_Click" />
+    </StackPanel>
+  </Grid>
+</Window>

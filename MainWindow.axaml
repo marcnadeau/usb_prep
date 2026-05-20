@@ -183,6 +183,15 @@
                   Foreground="White"
                   IsVisible="False" />
 
+            <Button Name="SettingsButton"
+              Content="Settings"
+              Click="SettingsButton_Click"
+              Padding="15,10"
+              FontSize="14"
+              FontWeight="Bold"
+              Background="#34495E"
+              Foreground="White" />
+
           <CheckBox Name="CompilationCheckBox"
                     IsVisible="False"
                     IsChecked="True"

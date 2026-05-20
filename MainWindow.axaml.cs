@@ -20,21 +20,17 @@ namespace MediaFileAnalyzer;
 
 public partial class MainWindow : Window
 {
-    private static readonly HashSet<string> SupportedAudioExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".mp3", ".m4a"
-    };
-
     private static readonly HashSet<string> ScannableAudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg", ".wma", ".aiff", ".alac"
     };
 
     private readonly ObservableCollection<MediaFileInfo> _mediaFiles = new();
-        private string _currentScanPath = string.Empty;
-        private string _targetPath = string.Empty;
-        private bool _hasComparisonResults;
-        private Avalonia.Controls.DataGrid? _filesDataGrid;
+    private string _currentScanPath = string.Empty;
+    private string _targetPath = string.Empty;
+    private bool _hasComparisonResults;
+    private Avalonia.Controls.DataGrid? _filesDataGrid;
+    private ConversionSettings _conversionSettings = ConversionSettingsStore.Load();
     private FfmpegConsoleWindow? _ffmpegConsoleWindow;
     private CancellationTokenSource? _operationCts;
     private Process? _currentFfmpegProcess;
@@ -49,6 +45,8 @@ public partial class MainWindow : Window
             _filesDataGrid = this.FindControl<Avalonia.Controls.DataGrid>("FilesDataGrid");
             if (_filesDataGrid != null)
                 _filesDataGrid.ItemsSource = _mediaFiles;
+
+            RefreshConversionUi();
         };
     }
 
@@ -83,6 +81,59 @@ public partial class MainWindow : Window
             EnsureFfmpegConsoleWindow();
             _ffmpegConsoleWindow?.AppendLog(line);
         });
+    }
+
+    private void RefreshConversionUi()
+    {
+        var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
+        var namingHintText = NamingHintText ?? this.FindControl<TextBlock>("NamingHintText");
+
+        if (convertButton != null)
+        {
+            convertButton.Content = $"Convert FLAC to {GetOutputFormatDisplayName()} ({GetBitrateLabel()})";
+        }
+
+        if (namingHintText != null)
+        {
+            namingHintText.Text = $"Keep {GetKeepFormatsSummary()} without transcoding; convert the rest to {GetOutputFormatDisplayName()} with {GetCodecDisplayName()}.";
+        }
+    }
+
+    private string GetOutputFormatDisplayName()
+        => AudioConversionCatalog.GetOutputFormat(_conversionSettings.OutputFormat).Label.Split(' ')[0];
+
+    private string GetCodecDisplayName()
+        => AudioConversionCatalog.GetCodecOptions(_conversionSettings.OutputFormat, fraunhoferAvailable: true)
+            .FirstOrDefault(codec => codec.Id.Equals(_conversionSettings.OutputCodec, StringComparison.OrdinalIgnoreCase))?.Label
+            ?? AudioConversionCatalog.GetCodecOptions(_conversionSettings.OutputFormat, fraunhoferAvailable: true).First().Label;
+
+    private string GetBitrateLabel() => $"{Math.Max(1, _conversionSettings.BitrateKbps)}kbps";
+
+    private string GetKeepFormatsSummary()
+        => string.Join(", ", _conversionSettings.KeepExtensions
+            .OrderBy(extension => extension, StringComparer.OrdinalIgnoreCase)
+            .Select(AudioConversionCatalog.GetFormatLabel));
+
+    private bool IsKeptExtension(string extension)
+        => _conversionSettings.KeepExtensions.Contains(AudioConversionCatalog.NormalizeExtension(extension));
+
+    private string ResolveOutputCodecId()
+    {
+        var availableCodecs = AudioConversionCatalog.GetCodecOptions(_conversionSettings.OutputFormat, fraunhoferAvailable: FFmpegHelper.IsFFmpegInstalled());
+        return availableCodecs.FirstOrDefault(codec => codec.Id.Equals(_conversionSettings.OutputCodec, StringComparison.OrdinalIgnoreCase))?.Id
+            ?? availableCodecs.First().Id;
+    }
+
+    private string BuildTranscodeArguments(string sourcePath, string destinationPath)
+    {
+        string codecId = ResolveOutputCodecId();
+        int bitrate = Math.Max(1, _conversionSettings.BitrateKbps);
+        string outputFormat = AudioConversionCatalog.NormalizeExtension(_conversionSettings.OutputFormat);
+        string extraArgs = outputFormat.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
+            ? " -movflags +faststart"
+            : string.Empty;
+
+        return $"-hide_banner -nostats -loglevel warning -y -i \"{sourcePath}\" -vn -map_metadata 0 -c:a {codecId} -b:a {bitrate}k{extraArgs} \"{destinationPath}\"";
     }
 
     private void StopButton_Click(object? sender, RoutedEventArgs e)
@@ -122,6 +173,16 @@ public partial class MainWindow : Window
         }
 
         Close();
+    }
+
+    private async void SettingsButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsWindow(_conversionSettings);
+        if (await dialog.ShowDialog<bool?>(this) == true)
+        {
+            _conversionSettings = ConversionSettingsStore.Load();
+            RefreshConversionUi();
+        }
     }
 
     private async void FormatTargetAsFat32Button_Click(object? sender, RoutedEventArgs e)
@@ -1224,7 +1285,7 @@ public partial class MainWindow : Window
             }
         }
 
-        bool hasUnsupported = candidates.Any(c => !SupportedAudioExtensions.Contains($".{c.Format}"));
+        bool hasUnsupported = candidates.Any(c => !IsKeptExtension($".{c.Format}"));
         bool convertUnsupported = false;
 
         if (hasUnsupported && FFmpegHelper.IsFFmpegInstalled())
@@ -1308,9 +1369,9 @@ public partial class MainWindow : Window
             var media = candidates[i];
             string extension = Path.GetExtension(media.FilePath).ToLowerInvariant();
             string relativePath = Path.GetRelativePath(_currentScanPath, media.FilePath);
-            string destinationRelative = SupportedAudioExtensions.Contains(extension)
+            string destinationRelative = IsKeptExtension(extension)
                 ? relativePath
-                : Path.ChangeExtension(relativePath, ".mp3");
+                : Path.ChangeExtension(relativePath, _conversionSettings.OutputFormat);
             string destinationDirectory = Path.GetDirectoryName(destinationRelative) ?? string.Empty;
 
             var (disc, track) = ReadTrackPositionForOrdering(media.FilePath, media.FileName);
@@ -1399,7 +1460,7 @@ public partial class MainWindow : Window
             try
             {
                 string extension = Path.GetExtension(media.FilePath).ToLowerInvariant();
-                bool directCopy = SupportedAudioExtensions.Contains(extension);
+                bool directCopy = IsKeptExtension(extension);
 
                 var metadata = ReadTrackMetadata(media.FilePath);
                 var metadataKey = BuildTrackKey(metadata.Artist, metadata.Album, metadata.Title, media.FileName);
@@ -1421,7 +1482,7 @@ public partial class MainWindow : Window
                 string relativePath = Path.GetRelativePath(_currentScanPath, media.FilePath);
                 string destinationRelative = directCopy
                     ? relativePath
-                    : Path.ChangeExtension(relativePath, ".mp3");
+                    : Path.ChangeExtension(relativePath, _conversionSettings.OutputFormat);
                 string destinationPath = Path.Combine(_targetPath, destinationRelative);
 
                 string? destinationDirectory = Path.GetDirectoryName(destinationPath);
@@ -1439,7 +1500,7 @@ public partial class MainWindow : Window
                 }
                 else
                 {
-                    ConvertFileToMp3(media.FilePath, destinationPath, cancellationToken);
+                    ConvertFileToConfiguredOutput(media.FilePath, destinationPath, cancellationToken);
                     converted++;
                 }
 
@@ -1476,10 +1537,10 @@ public partial class MainWindow : Window
         return new TransferSummary(copied, converted, skipped, failed);
     }
 
-    private void ConvertFileToMp3(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    private void ConvertFileToConfiguredOutput(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {
         AppendFfmpegLog($"Converting for transfer: {sourcePath} -> {destinationPath}");
-        var arguments = $"-y -i \"{sourcePath}\" -b:a 320k -q:v 0 \"{destinationPath}\"";
+        var arguments = BuildTranscodeArguments(sourcePath, destinationPath);
         var processInfo = new ProcessStartInfo
         {
             FileName = "ffmpeg",
@@ -1925,11 +1986,11 @@ public partial class MainWindow : Window
 
         try
         {
-            await Task.Run(() => ConvertFlacToMp3(flacFiles, compilationAlbumsForConvert, progress, _operationCts.Token));
+            await Task.Run(() => ConvertFlacToConfiguredOutput(flacFiles, compilationAlbumsForConvert, progress, _operationCts.Token));
 
             if (conversionProgressBar != null) conversionProgressBar.Value = 100;
             if (progressStatusText != null) progressStatusText.Text = "Conversion complete!";
-            if (statusText != null) statusText.Text = "Conversion complete. Original FLAC files preserved. Re-scan folder to see new MP3 files.";
+            if (statusText != null) statusText.Text = $"Conversion complete. Original FLAC files preserved. Re-scan folder to see new {GetOutputFormatDisplayName()} files.";
             if (progressBorder != null) progressBorder.IsVisible = false;
             if (convertButton != null) convertButton.IsVisible = true;
             if (renameButton != null) renameButton.IsVisible = true;
@@ -1960,7 +2021,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ConvertFlacToMp3(List<MediaFileInfo> flacFiles, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
+    private void ConvertFlacToConfiguredOutput(List<MediaFileInfo> flacFiles, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
     {
         int filesCompleted = 0;
         int totalFiles = flacFiles.Count;
@@ -1970,12 +2031,12 @@ public partial class MainWindow : Window
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var outputPath = Path.ChangeExtension(flacFile.FilePath, ".mp3");
+                var outputPath = Path.ChangeExtension(flacFile.FilePath, _conversionSettings.OutputFormat);
                 AppendFfmpegLog($"\n--- [{filesCompleted + 1}/{totalFiles}] {flacFile.FileName} ---");
                 AppendFfmpegLog($"Input : {flacFile.FilePath}");
                 AppendFfmpegLog($"Output: {outputPath}");
 
-                var arguments = $"-hide_banner -nostats -loglevel warning -y -i \"{flacFile.FilePath}\" -vn -b:a 320k \"{outputPath}\"";
+                var arguments = BuildTranscodeArguments(flacFile.FilePath, outputPath);
                 var processInfo = new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
@@ -2022,7 +2083,7 @@ public partial class MainWindow : Window
                         ? Path.GetDirectoryName(flacFile.FilePath) ?? Directory.GetCurrentDirectory()
                         : _currentScanPath;
                     FileNamer.RenameToPicardStyle(outputPath, baseDirectory, compilationAlbums);
-                    AppendFfmpegLog("Renamed/moved converted MP3 with Picard naming.");
+                    AppendFfmpegLog($"Renamed/moved converted {GetOutputFormatDisplayName()} file with Picard naming.");
                 }
 
                 filesCompleted++;

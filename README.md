@@ -8,13 +8,15 @@ Prepare a clean, car-friendly USB music library by:
 - Scanning a source music folder and a target USB drive
 - Comparing source and target by track metadata to identify missing files
 - Transferring selected or missing tracks to the USB drive
-- Converting non-MP3/M4A formats (e.g. FLAC) to MP3 at 320kbps before copying
+- Choosing which formats stay as-is and which are transcoded before copying
+- Selecting the output container/codec and bitrate used for transcodes
 - Grouping albums in consistent folders and renaming files in a predictable order
 - Cleaning up empty folders after moves
 
 ## Features
 
 - **Dual Folder Selection**: Separate **Source** and **Target** browse buttons
+- **Conversion Settings**: Pick the keep formats, output format, codec, and bitrate from a dedicated settings window
 - **Audio File Detection**: Detects MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, and ALAC files
 - **Metadata Display**: Grid shows Artist, Album, Title, Format, Size, and Compare status for each file
 - **Source/Target Comparison**:
@@ -25,18 +27,19 @@ Prepare a clean, car-friendly USB music library by:
 - **Smart Transfer**:
   - Transfer **selected rows** (multi-select in the file grid) or all **Missing** files after a compare
   - If no selection and no compare results, offers to transfer all scanned files
-  - MP3 and M4A files are copied directly (no re-encoding)
-  - Other formats trigger a single **Convert before copy?** prompt per transfer operation
+  - Formats selected in **keep formats** are copied directly (no re-encoding)
+  - All other formats are transcoded with the configured FFmpeg output settings before copy
   - **Per-file conflict prompt** when a file already exists at the destination: Overwrite / Skip / Cancel transfer
   - Preserves source folder structure under the target root
   - Progress bar, file counter, and Stop/cancel support
   - Transfer summary: Copied / Converted / Skipped / Failed counts
-- **FLAC to MP3 Conversion** (standalone):
-  - Converts FLAC files to MP3 at 320kbps
+- **Standalone Conversion**:
+  - Converts FLAC files to the configured output format
+  - Uses the configured bitrate and codec
   - Uses FFmpeg for reliable conversion
   - Shows real-time FFmpeg logs in a dedicated console window
   - Stop button with immediate process kill
-  - Optionally deletes original FLAC files after successful conversion
+  - Keeps the original FLAC files in place and renames the generated output into Picard-style folders
 - **Picard-Style Organization**:
   - Uses metadata to rename and move files into album folders
   - Folder: `AlbumArtist/Album` (fallbacks: artist → "Unknown Artist"; album → "Singles")
@@ -54,8 +57,8 @@ MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, ALAC
 ### Direct Copy (no conversion)
 MP3 (.mp3), M4A (.m4a)
 
-### Converted to MP3 on Transfer
-FLAC, WAV, AAC, OGG, WMA, AIFF, ALAC → MP3 at 320kbps
+### Converted on Transfer
+Any format not checked in the keep list → configured output format/codec/bitrate
 
 ## Prerequisites
 
@@ -78,8 +81,15 @@ dotnet run
 ### Basic scan & convert (existing workflow)
 1. Click **Source Browse...** and select your music folder
 2. Click **Scan**
-3. If FLAC files are found, click **Convert FLAC to MP3 (320kbps)**
+3. If FLAC files are found, click **Convert FLAC to ...** using the current settings
 4. Use **Rename All Files (Picard)** to organize files into `Artist/Album/Track - Title` structure
+
+### Settings
+1. Click **Settings** to open the conversion settings window
+2. Choose which formats should be copied directly
+3. Choose the output format and codec for every other format
+4. Set the target bitrate
+5. If FFmpeg exposes `libfdk_aac`, the settings window will offer Fraunhofer AAC as an option for M4A output
 
 ### Transfer to USB (new workflow)
 1. Click **Source Browse...** → select your music library folder → **Scan**
@@ -88,7 +98,7 @@ dotnet run
 4. The **Compare** column in the grid updates to *Missing*, *On target*, or *Unknown tags*
 5. Optionally select specific rows (Ctrl+click / Shift+click) to transfer a subset
 6. Click **Transfer Selected/Missing to Target**
-7. If unsupported formats are included, choose **Yes** (convert to MP3) or **No** (skip them)
+7. If unsupported formats are included, they will be transcoded using the configured output format
 8. Resolve any file conflicts per-file: **Yes** overwrite, **No** skip, **Cancel** stop transfer
 9. A summary dialog reports Copied / Converted / Skipped / Failed counts
 
@@ -119,8 +129,8 @@ choco install ffmpeg
 
 ## Conversion Details
 
-- **Quality**: 320kbps (maximum MP3 quality)
-- **Codec**: MP3 (MPEG-1 Layer 3)
+- **Quality**: configurable bitrate
+- **Codec**: configurable per output format
 - **Metadata**: Preserved from source file by FFmpeg
 - **Processing**: Sequential (one file at a time for stability and cancellability)
 
