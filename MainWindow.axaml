@@ -153,16 +153,7 @@
                   IsEnabled="False"
                   ToolTip.Tip="Copy or transcode missing tracks to the target" />
 
-          <Button Name="TagViaMusicBrainzButton"
-                  Content="Tag via MusicBrainz"
-                  Click="TagViaMusicBrainzButton_Click"
-                  Padding="14,9"
-                  FontSize="13"
-                  FontWeight="Bold"
-                  Background="#D35400"
-                  Foreground="White"
-                  IsEnabled="False"
-                  ToolTip.Tip="Identify tracks via AcoustID fingerprint and write MusicBrainz tags" />
+
 
           <CheckBox Name="CompilationCheckBox"
                     IsVisible="False"

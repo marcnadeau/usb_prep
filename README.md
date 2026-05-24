@@ -40,13 +40,15 @@ Prepare a clean, car-friendly USB music library by:
   - Shows real-time FFmpeg logs in a dedicated console window
   - Stop button with immediate process kill
   - Keeps the original FLAC files in place and renames the generated output into Picard-style folders
-- **Target Maintenance**: **Reorganize** renames and sorts audio files on the target into Artist/Album/Track layout; **Clean Dups** removes duplicate tracks detected by metadata key
+- **Target Maintenance**:
+  - **Reorganize** renames and sorts audio files on the target into Album/Track layout and removes now-empty source folders
+  - **Clean Dups** removes duplicate tracks detected by metadata key
 - **Picard-Style Organization**:
-  - Uses metadata to rename and move files into album folders
-  - Folder: `AlbumArtist/Album` (fallbacks: artist → "Unknown Artist"; album → "Singles")
+  - Used by rename/reorganize workflows to place files into metadata-based album folders
+  - Folder: `Album` for reorganize workflow (`AlbumArtist/Album` is used by Picard rename)
   - File: `TrackNumber - Title` (multi-disc: `DiscNumber-TrackNumber - Title`)
   - Detects compilations and groups them correctly
-  - Cleans up now-empty source directories
+  - Cleans up now-empty source directories after moves
 - **Statistics Dashboard**: Total files, MP3 count, FLAC count, total size
 - **Recursive Scanning**: Scans all subfolders within the selected directory
 
@@ -122,6 +124,7 @@ choco install ffmpeg
 ## Project Structure
 
 - `MainWindow.axaml` / `MainWindow.axaml.cs` — UI and all scan, compare, transfer, convert, rename workflows
+- `FileOrganizer.cs` — Reorganize workflow: metadata extraction, Artist/Album routing, file moves, empty-folder cleanup
 - `FileNamer.cs` — Picard-style naming, compilation detection, empty-folder cleanup
 - `FfmpegConsoleWindow.axaml` / `FfmpegConsoleWindow.axaml.cs` — Real-time FFmpeg log viewer
 - `MediaAnalyzer.cs` — Audio file analysis
