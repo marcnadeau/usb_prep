@@ -79,6 +79,17 @@ dotnet build
 dotnet run
 ```
 
+## Quick Launchers
+
+- Linux: run `./launch-linux.sh`
+- Windows: run `launch-windows.bat`
+
+Both launchers run the app from the repository root with:
+
+```text
+dotnet run --project MediaFileAnalyzer.csproj -c Debug
+```
+
 ## How to Use
 
 ### Basic scan & convert
