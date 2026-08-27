@@ -60,7 +60,7 @@
 
     <!-- ── Target row ── -->
     <Border Grid.Row="1" Padding="16,12" Background="#DCE8EE">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Target:"
                    VerticalAlignment="Center"
@@ -122,6 +122,17 @@
                 Background="#C0392B"
                 Foreground="White"
                 ToolTip.Tip="Remove duplicate tracks from the target folder" />
+
+        <Button Grid.Column="6"
+          Name="RepairTargetButton"
+          Content="Repair USB"
+          Click="RepairTargetButton_Click"
+          Padding="12,8"
+          Margin="8,0,0,0"
+          FontSize="13"
+          Background="#D68910"
+          Foreground="White"
+          ToolTip.Tip="Inspect the target USB drive and fix song ordering/layout issues without emptying it" />
       </Grid>
     </Border>
 
@@ -152,6 +163,17 @@
                   Foreground="White"
                   IsEnabled="False"
                   ToolTip.Tip="Copy or transcode missing tracks to the target" />
+
+            <Button Name="PrepareUsbButton"
+              Content="One-Step Prepare USB"
+              Click="PrepareUsbButton_Click"
+              Padding="14,9"
+              FontSize="13"
+              FontWeight="Bold"
+              Background="#6C5CE7"
+              Foreground="White"
+              IsEnabled="False"
+              ToolTip.Tip="Compare, optionally open Picard for tag fixes, then transfer everything in one guided flow" />
 
 
 

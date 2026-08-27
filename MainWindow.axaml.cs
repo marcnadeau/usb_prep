@@ -399,6 +399,455 @@ public partial class MainWindow : Window
         }
     }
 
+    private sealed record TargetRepairPlan(
+        int TotalAudioFiles,
+        int FilesNeedingMove,
+        int FoldersNeedingRewrite,
+        int FilesNeedingRewrite,
+        int FilesWithUnknownTags,
+        List<string> PreviewLines);
+
+    private enum RepairTargetMode
+    {
+        FolderOrderOnly,
+        SongsInFolders,
+        FullRepair
+    }
+
+    private TargetRepairPlan BuildTargetRepairPlan(string targetPath, RepairTargetMode mode, CancellationToken cancellationToken)
+    {
+        var audioFiles = Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+            .Where(f => ScannableAudioExtensions.Contains(Path.GetExtension(f)))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var previewLines = new List<string>();
+        int filesNeedingMove = 0;
+        int foldersNeedingRewrite = 0;
+        int filesNeedingRewrite = 0;
+        int filesWithUnknownTags = 0;
+
+        var compilationAlbums = FileNamer.DetectCompilationAlbums(audioFiles);
+        var inspectedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (mode is RepairTargetMode.FolderOrderOnly or RepairTargetMode.FullRepair)
+        {
+            var rootDirectories = Directory.GetDirectories(targetPath, "*", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var desiredRootDirectories = rootDirectories
+                .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (!rootDirectories.SequenceEqual(desiredRootDirectories, StringComparer.OrdinalIgnoreCase))
+            {
+                foldersNeedingRewrite += rootDirectories.Count;
+                if (previewLines.Count < 40)
+                {
+                    previewLines.Add("REWRITE top-level folder order on target");
+                }
+            }
+        }
+
+        foreach (var file in audioFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (mode == RepairTargetMode.FullRepair)
+            {
+                string expectedPath = FileNamer.GetPicardPath(file, targetPath, compilationAlbums);
+                if (!string.Equals(Path.GetFullPath(file), Path.GetFullPath(expectedPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    filesNeedingMove++;
+                    if (previewLines.Count < 40)
+                    {
+                        previewLines.Add($"MOVE  {Path.GetRelativePath(targetPath, file)} -> {Path.GetRelativePath(targetPath, expectedPath)}");
+                    }
+                }
+            }
+
+            var metadata = ReadTrackMetadata(file);
+            if (string.IsNullOrWhiteSpace(metadata.Artist) && string.IsNullOrWhiteSpace(metadata.Album) && string.IsNullOrWhiteSpace(metadata.Title))
+            {
+                filesWithUnknownTags++;
+            }
+
+            string currentDirectory = Path.GetDirectoryName(file) ?? targetPath;
+            if (!inspectedDirectories.Add(currentDirectory))
+            {
+                continue;
+            }
+
+            var siblingAudioFiles = Directory.GetFiles(currentDirectory, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(f => ScannableAudioExtensions.Contains(Path.GetExtension(f)))
+                .ToList();
+
+            if (siblingAudioFiles.Count <= 1)
+            {
+                continue;
+            }
+
+            var physicalOrder = siblingAudioFiles.ToList();
+            var desiredOrder = siblingAudioFiles
+                .Select(path =>
+                {
+                    var (disc, track) = ReadTrackPositionForOrdering(path, Path.GetFileName(path));
+                    return new { Path = path, Disc = disc, Track = track, Name = Path.GetFileName(path) };
+                })
+                .OrderBy(x => x.Disc)
+                .ThenBy(x => x.Track)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.Path)
+                .ToList();
+
+            if ((mode is RepairTargetMode.SongsInFolders or RepairTargetMode.FullRepair) &&
+                !desiredOrder.SequenceEqual(physicalOrder, StringComparer.OrdinalIgnoreCase))
+            {
+                filesNeedingRewrite += siblingAudioFiles.Count;
+                if (previewLines.Count < 40)
+                {
+                    previewLines.Add($"REWRITE order in {Path.GetRelativePath(targetPath, currentDirectory)}");
+                }
+            }
+        }
+
+        return new TargetRepairPlan(audioFiles.Count, filesNeedingMove, foldersNeedingRewrite, filesNeedingRewrite, filesWithUnknownTags, previewLines);
+    }
+
+    private async Task<bool> ShowTargetRepairPreviewDialogAsync(TargetRepairPlan plan, RepairTargetMode mode)
+    {
+        string previewText = string.Join(Environment.NewLine, plan.PreviewLines);
+        if (plan.PreviewLines.Count == 0)
+        {
+            previewText = "No preview lines available.";
+        }
+        else if (plan.TotalAudioFiles > plan.PreviewLines.Count)
+        {
+            previewText += Environment.NewLine + Environment.NewLine + "Additional files may also be adjusted.";
+        }
+
+        var dialog = new Window
+        {
+            Title = "Repair USB preview",
+            Width = 860,
+            Height = 560,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = true
+        };
+
+        var intro = new TextBlock
+        {
+            Text = $"Mode: {GetRepairModeLabel(mode)}. Found {plan.TotalAudioFiles} audio file(s). Proposed fixes: {plan.FilesNeedingMove} relocate, {plan.FoldersNeedingRewrite} folder-order rewrites, {plan.FilesNeedingRewrite} song-order rewrites, {plan.FilesWithUnknownTags} with weak or missing tags.",
+            Margin = new Thickness(0, 0, 0, 10),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        };
+
+        var details = new TextBox
+        {
+            Text = previewText,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            Height = 380,
+            FontFamily = new Avalonia.Media.FontFamily("monospace")
+        };
+
+        var note = new TextBlock
+        {
+            Text = "This repairs the selected USB target in place. It reorganizes files and rewrites their physical order without emptying the drive first.",
+            Margin = new Thickness(0, 10, 0, 0),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Foreground = Avalonia.Media.Brushes.DimGray
+        };
+
+        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+        var cancelButton = new Button { Content = "Cancel", Width = 120, Margin = new Thickness(6, 0) };
+        var repairButton = new Button { Content = "Repair USB", Width = 140, Margin = new Thickness(6, 0) };
+
+        var tcs = new TaskCompletionSource<bool>();
+        cancelButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
+        repairButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+
+        buttonPanel.Children.Add(cancelButton);
+        buttonPanel.Children.Add(repairButton);
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children =
+            {
+                intro,
+                details,
+                note,
+                buttonPanel
+            }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+        }
+        else
+        {
+            dialog.Show();
+        }
+
+        return await tcs.Task;
+    }
+
+    private static string GetRepairModeLabel(RepairTargetMode mode)
+        => mode switch
+        {
+            RepairTargetMode.FolderOrderOnly => "Fix folder order only",
+            RepairTargetMode.SongsInFolders => "Fix song order inside folders",
+            RepairTargetMode.FullRepair => "Full repair",
+            _ => "Repair"
+        };
+
+    private async Task<RepairTargetMode?> ShowRepairModeDialogAsync()
+    {
+        var dialog = new Window
+        {
+            Title = "Repair USB mode",
+            Width = 620,
+            Height = 260,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var intro = new TextBlock
+        {
+            Text = "Choose how the USB drive should be repaired.",
+            Margin = new Thickness(0, 0, 0, 12),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        };
+
+        var buttonPanel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 10 };
+        var folderButton = new Button { Content = "Fix folder order only", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var songsButton = new Button { Content = "Fix song order inside folders", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var fullButton = new Button { Content = "Full repair", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var cancelButton = new Button { Content = "Cancel", HorizontalAlignment = HorizontalAlignment.Right, Width = 120, Margin = new Thickness(0, 12, 0, 0) };
+
+        var tcs = new TaskCompletionSource<RepairTargetMode?>();
+        folderButton.Click += (_, _) => { tcs.TrySetResult(RepairTargetMode.FolderOrderOnly); dialog.Close(); };
+        songsButton.Click += (_, _) => { tcs.TrySetResult(RepairTargetMode.SongsInFolders); dialog.Close(); };
+        fullButton.Click += (_, _) => { tcs.TrySetResult(RepairTargetMode.FullRepair); dialog.Close(); };
+        cancelButton.Click += (_, _) => { tcs.TrySetResult(null); dialog.Close(); };
+
+        buttonPanel.Children.Add(folderButton);
+        buttonPanel.Children.Add(songsButton);
+        buttonPanel.Children.Add(fullButton);
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children =
+            {
+                intro,
+                buttonPanel,
+                cancelButton
+            }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+        }
+        else
+        {
+            dialog.Show();
+        }
+
+        return await tcs.Task;
+    }
+
+    private void RewriteFolderOrderOnTarget(
+        string targetPath,
+        ref int processed,
+        int total,
+        TextBlock? progressCountText,
+        ProgressBar? conversionProgressBar,
+        TextBlock? currentFileText,
+        CancellationToken cancellationToken)
+    {
+        string tempRoot = Path.Combine(targetPath, $".usb_prep_folder_rewrite_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var directories = Directory.GetDirectories(targetPath, "*", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var moved = new List<(string TempPath, string DestinationPath, string DisplayName)>();
+            foreach (var directory in directories)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string tempPath = Path.Combine(tempRoot, Guid.NewGuid().ToString("N"));
+                Directory.Move(directory, tempPath);
+                moved.Add((tempPath, directory, Path.GetFileName(directory)));
+            }
+
+            foreach (var item in moved)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Directory.Move(item.TempPath, item.DestinationPath);
+                processed++;
+                int capturedProcessed = processed;
+                int percent = (capturedProcessed * 100) / Math.Max(1, total);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (conversionProgressBar != null) conversionProgressBar.Value = percent;
+                    if (progressCountText != null) progressCountText.Text = $"{capturedProcessed}/{total}";
+                    if (currentFileText != null) currentFileText.Text = item.DisplayName;
+                });
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+    }
+
+    private async Task RepairTargetAsync(string targetPath, RepairTargetMode mode)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
+        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
+        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = $"{GetRepairModeLabel(mode)}...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+        if (progressCountText != null) progressCountText.Text = string.Empty;
+
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+
+        try
+        {
+            int processed = 0;
+            int total = 1;
+
+            if (mode is RepairTargetMode.FolderOrderOnly or RepairTargetMode.FullRepair)
+            {
+                total = Math.Max(total, Directory.GetDirectories(targetPath, "*", SearchOption.TopDirectoryOnly).Length);
+            }
+
+            if (mode is RepairTargetMode.SongsInFolders or RepairTargetMode.FullRepair)
+            {
+                total = Math.Max(total, Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+                    .Count(f => ScannableAudioExtensions.Contains(Path.GetExtension(f))));
+            }
+
+            if (mode == RepairTargetMode.FolderOrderOnly)
+            {
+                await Task.Run(() => RewriteFolderOrderOnTarget(targetPath, ref processed, total, progressCountText, conversionProgressBar, currentFileText, _operationCts.Token), _operationCts.Token);
+            }
+            else if (mode == RepairTargetMode.SongsInFolders)
+            {
+                await Task.Run(() => RewritePhysicalOrderOnTarget(targetPath, ref processed, total, progressCountText, conversionProgressBar, currentFileText, _operationCts.Token), _operationCts.Token);
+            }
+            else
+            {
+                var result = await Task.Run(() => FileOrganizer.OrganizeFilesAsync(targetPath, dryRun: false, null), _operationCts.Token);
+                processed += result.Moved + result.Skipped + result.Errors;
+                await Task.Run(() => RewriteFolderOrderOnTarget(targetPath, ref processed, total, progressCountText, conversionProgressBar, currentFileText, _operationCts.Token), _operationCts.Token);
+                await Task.Run(() => RewritePhysicalOrderOnTarget(targetPath, ref processed, total, progressCountText, conversionProgressBar, currentFileText, _operationCts.Token), _operationCts.Token);
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (conversionProgressBar != null) conversionProgressBar.Value = 100;
+                if (progressStatusText != null) progressStatusText.Text = $"{GetRepairModeLabel(mode)} complete.";
+            });
+
+            if (statusText != null) statusText.Text = $"{GetRepairModeLabel(mode)} complete.";
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = "USB repair canceled by user.";
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Error repairing USB: {ex.Message}";
+        }
+        finally
+        {
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            UpdateActionAvailability();
+        }
+    }
+
+    private async void RepairTargetButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+        {
+            if (statusText != null) statusText.Text = "Please select a valid target folder before repairing the USB drive.";
+            return;
+        }
+
+        var mode = await ShowRepairModeDialogAsync();
+        if (mode == null)
+        {
+            if (statusText != null) statusText.Text = "USB repair canceled.";
+            return;
+        }
+
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+
+        TargetRepairPlan plan;
+        try
+        {
+            plan = await Task.Run(() => BuildTargetRepairPlan(_targetPath, mode.Value, _operationCts.Token), _operationCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = "USB inspection canceled.";
+            _operationCts?.Dispose();
+            _operationCts = null;
+            return;
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Error inspecting USB drive: {ex.Message}";
+            _operationCts?.Dispose();
+            _operationCts = null;
+            return;
+        }
+
+        _operationCts?.Dispose();
+        _operationCts = null;
+
+        if (plan.FilesNeedingMove == 0 && plan.FoldersNeedingRewrite == 0 && plan.FilesNeedingRewrite == 0)
+        {
+            await ShowInfoDialogAsync("USB looks OK", "No obvious folder-layout or song-order issues were detected on the selected target.");
+            return;
+        }
+
+        bool confirm = await ShowTargetRepairPreviewDialogAsync(plan, mode.Value);
+        if (!confirm)
+        {
+            if (statusText != null) statusText.Text = "USB repair canceled.";
+            return;
+        }
+
+        await RepairTargetAsync(_targetPath, mode.Value);
+    }
+
     private async void CleanTargetDuplicatesButton_Click(object? sender, RoutedEventArgs e)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
@@ -885,14 +1334,214 @@ public partial class MainWindow : Window
 
         var compareButton = CompareButton ?? this.FindControl<Button>("CompareButton");
         var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
+        var prepareUsbButton = PrepareUsbButton ?? this.FindControl<Button>("PrepareUsbButton");
 
         if (compareButton != null)
             compareButton.IsEnabled = hasSource && hasTarget && hasFiles;
         if (transferButton != null)
             transferButton.IsEnabled = hasTarget && hasFiles;
+        if (prepareUsbButton != null)
+            prepareUsbButton.IsEnabled = hasSource && hasTarget && hasFiles;
     }
 
-    private async void CompareButton_Click(object? sender, RoutedEventArgs e)
+    private async Task ShowInfoDialogAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 580,
+            Height = 220,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var messageText = new TextBlock
+        {
+            Text = message,
+            Margin = new Thickness(0, 0, 0, 14),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        };
+
+        var okButton = new Button
+        {
+            Content = "OK",
+            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+
+        var tcs = new TaskCompletionSource<bool>();
+        okButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children =
+            {
+                messageText,
+                okButton
+            }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+        }
+        else
+        {
+            dialog.Show();
+        }
+
+        await tcs.Task;
+    }
+
+    private static bool TryLaunchPicard(string folderPath)
+    {
+        var launchCandidates = new[]
+        {
+            (FileName: "picard", Args: Array.Empty<string>()),
+            (FileName: "musicbrainz-picard", Args: Array.Empty<string>()),
+            (FileName: "flatpak", Args: new[] { "run", "org.musicbrainz.Picard" })
+        };
+
+        foreach (var candidate in launchCandidates)
+        {
+            try
+            {
+                var processInfo = new ProcessStartInfo
+                {
+                    FileName = candidate.FileName,
+                    UseShellExecute = false
+                };
+
+                foreach (var arg in candidate.Args)
+                {
+                    processInfo.ArgumentList.Add(arg);
+                }
+
+                processInfo.ArgumentList.Add(folderPath);
+
+                var process = Process.Start(processInfo);
+                if (process != null)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // Try next candidate.
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<bool> PromptForPicardAndRescanAsync()
+    {
+        var wantsPicard = await ShowConfirmDialogAsync(
+            "Review tags in Picard?",
+            "Do you want to open MusicBrainz Picard now to review or correct tags before the transfer starts?");
+
+        if (!wantsPicard)
+        {
+            return true;
+        }
+
+        if (!TryLaunchPicard(_currentScanPath))
+        {
+            await ShowInfoDialogAsync(
+                "Picard not available",
+                "MusicBrainz Picard could not be launched automatically. Install Picard or continue without it.");
+
+            return await ShowConfirmDialogAsync(
+                "Continue without Picard?",
+                "Picard did not launch. Continue with compare and transfer anyway?");
+        }
+
+        await ShowInfoDialogAsync(
+            "Picard launched",
+            "Picard has been opened with your source folder. Make any tag fixes there, save them, then click OK here to rescan and continue.");
+
+        await RescanCurrentSourceAsync();
+        return true;
+    }
+
+    private async Task RescanCurrentSourceAsync()
+    {
+        var folderPathTextBox = FolderPathTextBox ?? this.FindControl<TextBox>("FolderPathTextBox");
+        if (folderPathTextBox != null)
+        {
+            folderPathTextBox.Text = _currentScanPath;
+        }
+
+        await RunSourceScanAsync(_currentScanPath);
+    }
+
+    private async Task RunSourceScanAsync(string folderPath)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+        var totalFilesText = TotalFilesText ?? this.FindControl<TextBlock>("TotalFilesText");
+        var imageCountText = ImageCountText ?? this.FindControl<TextBlock>("ImageCountText");
+        var videoCountText = VideoCountText ?? this.FindControl<TextBlock>("VideoCountText");
+        var totalSizeText = TotalSizeText ?? this.FindControl<TextBlock>("TotalSizeText");
+        var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
+
+        _currentScanPath = folderPath;
+        _hasComparisonResults = false;
+        _mediaFiles.Clear();
+        if (totalFilesText != null) totalFilesText.Text = "0";
+        if (imageCountText != null) imageCountText.Text = "0";
+        if (videoCountText != null) videoCountText.Text = "0";
+        if (totalSizeText != null) totalSizeText.Text = "0 MB";
+        if (statusText != null) statusText.Text = "Scanning...";
+
+        var scannedFiles = await Task.Run(() => ScanFolder(folderPath));
+
+        foreach (var mediaInfo in scannedFiles)
+        {
+            _mediaFiles.Add(mediaInfo);
+        }
+
+        if (_filesDataGrid != null)
+        {
+            _filesDataGrid.ItemsSource = null;
+            _filesDataGrid.ItemsSource = _mediaFiles;
+        }
+
+        int totalFiles = _mediaFiles.Count;
+        int mp3Count = _mediaFiles.Count(f => f.Format.Equals("mp3", StringComparison.OrdinalIgnoreCase));
+        int flacCount = _mediaFiles.Count(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
+        long totalSize = _mediaFiles.Sum(f => f.FileSizeBytes);
+
+        if (totalFilesText != null) totalFilesText.Text = totalFiles.ToString();
+        if (imageCountText != null) imageCountText.Text = mp3Count.ToString();
+        if (videoCountText != null) videoCountText.Text = flacCount.ToString();
+        if (totalSizeText != null) totalSizeText.Text = FormatFileSize(totalSize);
+        if (statusText != null) statusText.Text = $"Scan complete. Found {totalFiles} audio file(s). FLAC files: {flacCount}";
+        if (convertButton != null) convertButton.IsEnabled = flacCount > 0;
+        UpdateActionAvailability();
+
+        var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
+        if (totalFiles > 0)
+        {
+            var allPaths = _mediaFiles.Select(f => f.FilePath).ToList();
+            _detectedCompilationAlbums = await Task.Run(() => FileNamer.DetectCompilationAlbums(allPaths));
+            bool hasCompilations = _detectedCompilationAlbums.Count > 0;
+            if (compilationCheckBox != null)
+            {
+                compilationCheckBox.IsVisible = hasCompilations;
+                compilationCheckBox.IsChecked = hasCompilations;
+            }
+            if (hasCompilations && statusText != null)
+                statusText.Text += $" — {_detectedCompilationAlbums.Count} multi-artist album(s) detected.";
+        }
+        else
+        {
+            _detectedCompilationAlbums.Clear();
+            if (compilationCheckBox != null) compilationCheckBox.IsVisible = false;
+        }
+    }
+
+    private async Task<CompareResult?> RunCompareWorkflowAsync()
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
@@ -900,10 +1549,154 @@ public partial class MainWindow : Window
         var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
         var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
         var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+        var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
 
         if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
         {
             if (statusText != null) statusText.Text = "Please select a valid target folder.";
+            return null;
+        }
+
+        if (_mediaFiles.Count == 0)
+        {
+            if (statusText != null) statusText.Text = "Scan a source folder first.";
+            return null;
+        }
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = "Comparing source and target metadata...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (progressCountText != null) progressCountText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+
+        try
+        {
+            var result = await Task.Run(() => CompareSourceAndTarget(_operationCts.Token));
+            _hasComparisonResults = true;
+            if (statusText != null)
+                statusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}, duplicates on target: {result.DuplicateOnTargetCount}, duplicates in source: {result.DuplicateInSourceCount}.";
+            var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
+            if (transferButton != null) transferButton.IsEnabled = true;
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = "Comparison stopped by user.";
+            return null;
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Comparison failed: {ex.Message}";
+            return null;
+        }
+        finally
+        {
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+        }
+    }
+
+    private async Task TransferCandidatesAsync(List<MediaFileInfo> candidates, bool requireCompareConfirmation)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+
+        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+        {
+            if (statusText != null) statusText.Text = "Please choose a valid target folder before transferring.";
+            return;
+        }
+
+        if (requireCompareConfirmation && !_hasComparisonResults)
+        {
+            var proceed = await ShowConfirmDialogAsync(
+                "No compare results",
+                "You haven't compared the source and target. Proceeding may copy duplicates or unnecessary files. Continue?");
+
+            if (!proceed)
+            {
+                if (statusText != null) statusText.Text = "Transfer canceled — run Compare first.";
+                return;
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            if (statusText != null) statusText.Text = "No files are queued for transfer.";
+            return;
+        }
+
+        bool hasUnsupported = candidates.Any(c => !IsKeptExtension($".{c.Format}"));
+        bool convertUnsupported = hasUnsupported && FFmpegHelper.IsFFmpegInstalled();
+
+        candidates = OrderCandidatesForPhysicalWrite(candidates);
+
+        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
+        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
+        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
+        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
+        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
+
+        if (progressBorder != null) progressBorder.IsVisible = true;
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
+        if (progressStatusText != null) progressStatusText.Text = "Transferring and organizing files...";
+        if (currentFileText != null) currentFileText.Text = string.Empty;
+        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+        _operationCts?.Dispose();
+        _operationCts = new CancellationTokenSource();
+
+        if (convertUnsupported)
+        {
+            EnsureFfmpegConsoleWindow();
+            if (_ffmpegConsoleWindow != null && !_ffmpegConsoleWindow.IsVisible)
+                _ffmpegConsoleWindow.Show(this);
+            _ffmpegConsoleWindow?.Activate();
+            AppendFfmpegLog($"=== Transfer conversion started at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+        }
+
+        try
+        {
+            var summary = await Task.Run(() => TransferFiles(candidates, convertUnsupported, _operationCts.Token));
+
+            if (statusText != null)
+                statusText.Text = $"Transfer complete. Copied: {summary.Copied}, Converted: {summary.Converted}, Skipped: {summary.Skipped}, Failed: {summary.Failed}.";
+        }
+        catch (OperationCanceledException)
+        {
+            if (statusText != null) statusText.Text = "Transfer stopped by user.";
+        }
+        catch (Exception ex)
+        {
+            if (statusText != null) statusText.Text = $"Transfer failed: {ex.Message}";
+        }
+        finally
+        {
+            if (progressBorder != null) progressBorder.IsVisible = false;
+            if (stopButton != null) stopButton.IsVisible = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            if (convertUnsupported)
+                AppendFfmpegLog($"=== Transfer conversion ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+        }
+    }
+
+    private async void PrepareUsbButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+
+        if (string.IsNullOrWhiteSpace(_currentScanPath) || !Directory.Exists(_currentScanPath))
+        {
+            if (statusText != null) statusText.Text = "Select and scan a source folder first.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
+        {
+            if (statusText != null) statusText.Text = "Select a target folder before starting the one-step prep.";
             return;
         }
 
@@ -913,43 +1706,45 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (progressBorder != null) progressBorder.IsVisible = true;
-        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
-        if (progressStatusText != null) progressStatusText.Text = "Comparing source and target metadata...";
-        if (currentFileText != null) currentFileText.Text = string.Empty;
-        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
-        _operationCts?.Dispose();
-        _operationCts = new CancellationTokenSource();
+        if (!await PromptForPicardAndRescanAsync())
+        {
+            return;
+        }
 
-        try
+        var compareResult = await RunCompareWorkflowAsync();
+        if (compareResult == null)
         {
-            var result = await Task.Run(() => CompareSourceAndTarget(_operationCts.Token));
+            return;
+        }
 
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (stopButton != null) stopButton.IsVisible = false;
-            _hasComparisonResults = true;
-            if (statusText != null)
-                statusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}, duplicates on target: {result.DuplicateOnTargetCount}, duplicates in source: {result.DuplicateInSourceCount}.";
-            var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
-            if (transferButton != null) transferButton.IsEnabled = true;
-        }
-        catch (OperationCanceledException)
+        var transferCandidates = _mediaFiles
+            .Where(m => string.Equals(m.CompareStatus, "Missing", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (transferCandidates.Count == 0)
         {
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (stopButton != null) stopButton.IsVisible = false;
-            if (statusText != null) statusText.Text = "Comparison stopped by user.";
+            await ShowInfoDialogAsync(
+                "Nothing to transfer",
+                "Everything already appears to be on the target, so there is nothing new to copy.");
+            return;
         }
-        catch (Exception ex)
+
+        var proceed = await ShowConfirmDialogAsync(
+            "Start transfer now?",
+            $"{transferCandidates.Count} file(s) are missing on the target. Start the transfer and conversion step now?");
+
+        if (!proceed)
         {
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (stopButton != null) stopButton.IsVisible = false;
-            if (statusText != null) statusText.Text = $"Comparison failed: {ex.Message}";
+            if (statusText != null) statusText.Text = "One-step prep stopped before transfer.";
+            return;
         }
-        finally
-        {
-            _operationCts?.Dispose();
-            _operationCts = null;
-        }
+
+        await TransferCandidatesAsync(transferCandidates, requireCompareConfirmation: false);
+    }
+
+    private async void CompareButton_Click(object? sender, RoutedEventArgs e)
+    {
+        await RunCompareWorkflowAsync();
     }
 
     private CompareResult CompareSourceAndTarget(CancellationToken cancellationToken)
@@ -1067,104 +1862,24 @@ public partial class MainWindow : Window
 
     private async void TransferButton_Click(object? sender, RoutedEventArgs e)
     {
-        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-
-        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
-        {
-            if (statusText != null) statusText.Text = "Please choose a valid target folder before transferring.";
-            return;
-        }
-
         var selectedFiles = GetSelectedMediaFiles();
         var candidates = selectedFiles.Count > 0
             ? selectedFiles
             : _mediaFiles.Where(m => string.Equals(m.CompareStatus, "Missing", StringComparison.OrdinalIgnoreCase)).ToList();
 
-        // If the user hasn't run a compare, warn them before proceeding.
-        if (!_hasComparisonResults)
-        {
-            var proceed = await ShowConfirmDialogAsync(
-                "No compare results",
-                "You haven't compared the source and target. Proceeding may copy duplicates or unnecessary files. Continue?");
-
-            if (!proceed)
-            {
-                if (statusText != null) statusText.Text = "Transfer canceled — run Compare first.";
-                return;
-            }
-        }
-
         if (candidates.Count == 0)
         {
             if (selectedFiles.Count == 0 && !_hasComparisonResults)
                 candidates = _mediaFiles.ToList();
-
-            if (candidates.Count == 0)
-            {
-                if (statusText != null) statusText.Text = "Select files to transfer, or run compare so missing files can be transferred.";
-                return;
-            }
         }
-
-        bool hasUnsupported = candidates.Any(c => !IsKeptExtension($".{c.Format}"));
-        bool convertUnsupported = false;
-
-        if (hasUnsupported && FFmpegHelper.IsFFmpegInstalled())
-            convertUnsupported = true;
-
-        candidates = OrderCandidatesForPhysicalWrite(candidates);
-
-        var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
-        var stopButton = StopButton ?? this.FindControl<Button>("StopButton");
-        var progressStatusText = ProgressStatusText ?? this.FindControl<TextBlock>("ProgressStatusText");
-        var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
-        var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
-
-        if (progressBorder != null) progressBorder.IsVisible = true;
-        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
-        if (progressStatusText != null) progressStatusText.Text = "Transferring and organizing files...";
-        if (currentFileText != null) currentFileText.Text = string.Empty;
-        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
-        _operationCts?.Dispose();
-        _operationCts = new CancellationTokenSource();
-
-        if (convertUnsupported)
+        if (candidates.Count == 0)
         {
-            EnsureFfmpegConsoleWindow();
-            if (_ffmpegConsoleWindow != null && !_ffmpegConsoleWindow.IsVisible)
-                _ffmpegConsoleWindow.Show(this);
-            _ffmpegConsoleWindow?.Activate();
-            AppendFfmpegLog($"=== Transfer conversion started at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
+            if (statusText != null) statusText.Text = "Select files to transfer, or run compare so missing files can be transferred.";
+            return;
         }
 
-        try
-        {
-            var summary = await Task.Run(() => TransferFiles(candidates, convertUnsupported, _operationCts.Token));
-
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (stopButton != null) stopButton.IsVisible = false;
-            if (statusText != null)
-                statusText.Text = $"Transfer complete. Copied: {summary.Copied}, Converted: {summary.Converted}, Skipped: {summary.Skipped}, Failed: {summary.Failed}.";
-        }
-        catch (OperationCanceledException)
-        {
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (stopButton != null) stopButton.IsVisible = false;
-            if (statusText != null) statusText.Text = "Transfer stopped by user.";
-        }
-        catch (Exception ex)
-        {
-            if (progressBorder != null) progressBorder.IsVisible = false;
-            if (stopButton != null) stopButton.IsVisible = false;
-            if (statusText != null) statusText.Text = $"Transfer failed: {ex.Message}";
-        }
-        finally
-        {
-            _operationCts?.Dispose();
-            _operationCts = null;
-            if (convertUnsupported)
-                AppendFfmpegLog($"=== Transfer conversion ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-        }
+        await TransferCandidatesAsync(candidates, requireCompareConfirmation: true);
     }
 
     private List<MediaFileInfo> GetSelectedMediaFiles()
@@ -1321,7 +2036,7 @@ public partial class MainWindow : Window
                 string baseDestinationPath = destinationPath;
                 while (File.Exists(destinationPath))
                 {
-                    string directory = Path.GetDirectoryName(baseDestinationPath);
+                    string? directory = Path.GetDirectoryName(baseDestinationPath);
                     string name = Path.GetFileNameWithoutExtension(baseDestinationPath);
                     string ext = Path.GetExtension(baseDestinationPath);
                     destinationPath = Path.Combine(directory ?? _targetPath, $"{name} ({counter}){ext}");
@@ -1477,11 +2192,6 @@ public partial class MainWindow : Window
     {
         var folderPathTextBox = FolderPathTextBox ?? this.FindControl<TextBox>("FolderPathTextBox");
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-        var totalFilesText = TotalFilesText ?? this.FindControl<TextBlock>("TotalFilesText");
-        var imageCountText = ImageCountText ?? this.FindControl<TextBlock>("ImageCountText");
-        var videoCountText = VideoCountText ?? this.FindControl<TextBlock>("VideoCountText");
-        var totalSizeText = TotalSizeText ?? this.FindControl<TextBlock>("TotalSizeText");
-        var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
 
         string folderPath = folderPathTextBox?.Text ?? string.Empty;
 
@@ -1494,64 +2204,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        _currentScanPath = folderPath;
-        _hasComparisonResults = false;
-        _mediaFiles.Clear();
-        if (totalFilesText != null) totalFilesText.Text = "0";
-        if (imageCountText != null) imageCountText.Text = "0";
-        if (videoCountText != null) videoCountText.Text = "0";
-        if (totalSizeText != null) totalSizeText.Text = "0 MB";
-        if (statusText != null) statusText.Text = "Scanning...";
-
         try
         {
-            var scannedFiles = await Task.Run(() => ScanFolder(folderPath));
-
-            foreach (var mediaInfo in scannedFiles)
-            {
-                _mediaFiles.Add(mediaInfo);
-            }
-
-                // Force the DataGrid to refresh its rows
-                if (_filesDataGrid != null)
-                {
-                    _filesDataGrid.ItemsSource = null;
-                    _filesDataGrid.ItemsSource = _mediaFiles;
-                }
-
-            int totalFiles = _mediaFiles.Count;
-            int mp3Count = _mediaFiles.Count(f => f.Format.Equals("mp3", StringComparison.OrdinalIgnoreCase));
-            int flacCount = _mediaFiles.Count(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
-            long totalSize = _mediaFiles.Sum(f => f.FileSizeBytes);
-
-            if (totalFilesText != null) totalFilesText.Text = totalFiles.ToString();
-            if (imageCountText != null) imageCountText.Text = mp3Count.ToString();
-            if (videoCountText != null) videoCountText.Text = flacCount.ToString();
-            if (totalSizeText != null) totalSizeText.Text = FormatFileSize(totalSize);
-            if (statusText != null) statusText.Text = $"Scan complete. Found {totalFiles} audio file(s). FLAC files: {flacCount}";
-            if (convertButton != null) convertButton.IsEnabled = flacCount > 0;
-            UpdateActionAvailability();
-
-            // Detect compilation albums in the background (reads tags for grouping).
-            var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
-            if (totalFiles > 0)
-            {
-                var allPaths = _mediaFiles.Select(f => f.FilePath).ToList();
-                _detectedCompilationAlbums = await Task.Run(() => FileNamer.DetectCompilationAlbums(allPaths));
-                bool hasCompilations = _detectedCompilationAlbums.Count > 0;
-                if (compilationCheckBox != null)
-                {
-                    compilationCheckBox.IsVisible = hasCompilations;
-                    compilationCheckBox.IsChecked = hasCompilations;
-                }
-                if (hasCompilations && statusText != null)
-                    statusText.Text += $" — {_detectedCompilationAlbums.Count} multi-artist album(s) detected.";
-            }
-            else
-            {
-                _detectedCompilationAlbums.Clear();
-                if (compilationCheckBox != null) compilationCheckBox.IsVisible = false;
-            }
+            await RunSourceScanAsync(folderPath);
         }
         catch (Exception ex)
         {
