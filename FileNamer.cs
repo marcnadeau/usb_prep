@@ -20,6 +20,15 @@ namespace MediaFileAnalyzer
             // normalized album name -> list of (trackArtist, albumArtist)
             var albumGroups = new Dictionary<string, List<(string trackArtist, string albumArtist)>>(StringComparer.OrdinalIgnoreCase);
 
+            // Helper: token set for fuzzy grouping
+            static HashSet<string> Tokenize(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var parts = System.Text.RegularExpressions.Regex.Split(s.ToLowerInvariant(), "[^a-z0-9]+")
+                    .Where(p => p.Length > 1).ToArray();
+                return new HashSet<string>(parts, StringComparer.OrdinalIgnoreCase);
+            }
+
             foreach (var filePath in filePaths)
             {
                 try
@@ -44,31 +53,73 @@ namespace MediaFileAnalyzer
                 }
             }
 
-            var compilations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var kvp in albumGroups)
-            {
-                var entries = kvp.Value;
+            // Now perform fuzzy clustering of album keys so near-identical album tags are treated as one album.
+            var keys = albumGroups.Keys.ToList();
+            var tokensMap = keys.ToDictionary(k => k, k => Tokenize(k), StringComparer.OrdinalIgnoreCase);
+            var clusters = new List<List<string>>();
+            var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                int distinctAlbumArtists = entries
+            for (int i = 0; i < keys.Count; i++)
+            {
+                var k = keys[i];
+                if (assigned.Contains(k)) continue;
+                var cluster = new List<string> { k };
+                assigned.Add(k);
+                var t1 = tokensMap[k];
+
+                for (int j = i + 1; j < keys.Count; j++)
+                {
+                    var k2 = keys[j];
+                    if (assigned.Contains(k2)) continue;
+                    var t2 = tokensMap[k2];
+                    if (t1.Count == 0 || t2.Count == 0) continue;
+                    var inter = t1.Intersect(t2, StringComparer.OrdinalIgnoreCase).Count();
+                    var union = t1.Union(t2, StringComparer.OrdinalIgnoreCase).Count();
+                    double jaccard = union == 0 ? 0.0 : (double)inter / union;
+                    if (jaccard >= 0.55)
+                    {
+                        cluster.Add(k2);
+                        assigned.Add(k2);
+                    }
+                }
+
+                clusters.Add(cluster);
+            }
+
+            var compilations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Evaluate each cluster for compilation characteristics
+            foreach (var cluster in clusters)
+            {
+                var combinedEntries = new List<(string trackArtist, string albumArtist)>();
+                foreach (var key in cluster)
+                {
+                    if (albumGroups.TryGetValue(key, out var list))
+                        combinedEntries.AddRange(list);
+                }
+
+                int distinctAlbumArtists = combinedEntries
                     .Select(e => e.albumArtist.Trim())
                     .Where(a => !string.IsNullOrWhiteSpace(a))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count();
 
-                bool allHaveAlbumArtist = entries.All(e => !string.IsNullOrWhiteSpace(e.albumArtist));
+                bool allHaveAlbumArtist = combinedEntries.All(e => !string.IsNullOrWhiteSpace(e.albumArtist));
 
-                // Multiple distinct track artists → compilation.
-                int distinctArtists = entries
+                int distinctArtists = combinedEntries
                     .Select(e => e.trackArtist.Trim())
                     .Where(a => !string.IsNullOrWhiteSpace(a))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count();
 
-                // Keep standard album grouping only when AlbumArtist is complete and consistent.
                 bool consistentAlbumArtist = allHaveAlbumArtist && distinctAlbumArtists == 1;
 
                 if (!consistentAlbumArtist && distinctArtists > 1)
-                    compilations.Add(kvp.Key);
+                {
+                    // mark all member keys as compilation albums
+                    foreach (var key in cluster)
+                        compilations.Add(key);
+                }
             }
 
             return compilations;
@@ -297,8 +348,52 @@ namespace MediaFileAnalyzer
                 return "singles";
             }
 
-            return string.Join(' ', album.Trim().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                .ToLowerInvariant();
+            // Best-effort tolerant normalization:
+            // - remove parenthetical phrases, years, and common edition markers
+            // - strip punctuation, accents, and extra whitespace
+            // - lowercase
+            try
+            {
+                string s = album.Trim();
+
+                // remove parenthetical content e.g. "Album Name (Deluxe)"
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\([^)]*\\)", "");
+
+                // remove bracketed content [Bonus Tracks]
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\[[^]]*\\]", "");
+
+                // remove common edition/year suffixes like "- 1999", "(2010 Remaster)", "Deluxe Edition"
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\b(edition|deluxe|remaster(ed)?|expanded|bonus|anniversary)\\b", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\b(19|20)\\d{2}\\b", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                // remove punctuation except letters/numbers/space (allow word chars, whitespace and dash)
+                s = System.Text.RegularExpressions.Regex.Replace(s, @"[^\w\s-]", "");
+
+                // Normalize diacritics: decompose and remove diacritic marks
+                var normalized = s.Normalize(System.Text.NormalizationForm.FormD);
+                var sb = new System.Text.StringBuilder();
+                foreach (var ch in normalized)
+                {
+                    var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+                    if (uc != System.Globalization.UnicodeCategory.NonSpacingMark)
+                        sb.Append(ch);
+                }
+                s = sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+
+                // remove leading articles
+                s = System.Text.RegularExpressions.Regex.Replace(s, "^(the |a |an )", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                // collapse separators and whitespace
+                s = System.Text.RegularExpressions.Regex.Replace(s, "[-_]+", " ");
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ").Trim();
+
+                if (string.IsNullOrWhiteSpace(s)) return "singles";
+                return s.ToLowerInvariant();
+            }
+            catch
+            {
+                return album.Trim().ToLowerInvariant();
+            }
         }
     }
 }

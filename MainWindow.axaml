@@ -17,7 +17,7 @@
     </Grid.RowDefinitions>
 
     <!-- ── Source row ── -->
-    <Border Grid.Row="0" Padding="16,12" Background="#ECF0F1">
+    <Border Grid.Row="0" Padding="16,12" Background="#1b1b1b">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Source:"
@@ -30,36 +30,36 @@
                  VerticalAlignment="Center"
                  Padding="8"
                  FontSize="14"
-                 Background="White"
-                 Foreground="#1F2933"
-                 BorderBrush="#95A5A6"
+           Background="#222222"
+           Foreground="White"
+           BorderBrush="#2f2f2f"
                  PlaceholderText="Type or paste folder path here..." />
 
-        <Button Grid.Column="2"
-                Content="Browse..."
-                Click="BrowseButton_Click"
-                Padding="15,8"
-                Margin="10,0,0,0"
-                FontSize="14"
-                Background="#3498DB"
-                Foreground="White"
-                ToolTip.Tip="Select source music folder" />
+          <Button Grid.Column="2"
+          Content="Browse..."
+          Click="BrowseButton_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          Background="#222222"
+          Foreground="White"
+          ToolTip.Tip="Select source music folder" />
 
         <Button Grid.Column="3"
-                Content="Scan"
-                Click="ScanButton_Click"
-                Padding="15,8"
-                Margin="10,0,0,0"
-                FontSize="14"
-                FontWeight="Bold"
-                Background="#27AE60"
-                Foreground="White"
-                ToolTip.Tip="Scan selected source folder for audio files" />
+          Content="Scan"
+          Click="ScanButton_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          FontWeight="Bold"
+          Background="#1DB954"
+          Foreground="White"
+          ToolTip.Tip="Scan selected source folder for audio files" />
       </Grid>
     </Border>
 
     <!-- ── Target row ── -->
-    <Border Grid.Row="1" Padding="16,12" Background="#DCE8EE">
+    <Border Grid.Row="1" Padding="16,12" Background="#1b1b1b">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
                    Text="Target:"
@@ -73,71 +73,49 @@
                  Padding="8"
                  FontSize="14"
                  IsReadOnly="True"
-                 Background="White"
-                 Foreground="#1F2933"
-                 BorderBrush="#95A5A6"
+           Background="#222222"
+           Foreground="White"
+           BorderBrush="#2f2f2f"
                  PlaceholderText="Select target folder (USB drive)..." />
 
-        <Button Grid.Column="2"
-                Content="Browse..."
-                Click="BrowseTargetButton_Click"
-                Padding="15,8"
-                Margin="10,0,0,0"
-                FontSize="14"
-                Background="#2980B9"
-                Foreground="White"
-                ToolTip.Tip="Select target USB drive folder" />
+          <Button Grid.Column="2"
+          Content="Browse..."
+          Click="BrowseTargetButton_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          Background="#222222"
+          Foreground="White"
+          ToolTip.Tip="Select target USB drive folder" />
 
-        <Button Grid.Column="3"
-                Name="CompareButton"
-                Content="Compare"
-                Click="CompareButton_Click"
-                Padding="15,8"
-                Margin="10,0,0,0"
-                FontSize="14"
-                FontWeight="Bold"
-                Background="#16A085"
-                Foreground="White"
-                IsEnabled="False"
-                ToolTip.Tip="Match source tracks against target by metadata" />
+          <Button Grid.Column="3"
+          Name="CompareButton"
+          Content="Compare"
+          Click="CompareButton_Click"
+          Padding="15,8"
+          Margin="10,0,0,0"
+          FontSize="14"
+          FontWeight="Bold"
+          Background="#1DB954"
+          Foreground="White"
+          IsEnabled="False"
+          ToolTip.Tip="Match source tracks against target by metadata" />
 
         <Button Grid.Column="4"
-                Name="ReorganizeTargetButton"
-                Content="Reorganize"
-                Click="ReorganizeButton_Click"
-                Padding="12,8"
-                Margin="20,0,0,0"
-                FontSize="13"
-                Background="#8E44AD"
-                Foreground="White"
-                ToolTip.Tip="Rename and sort audio files on the target into Artist/Album/Track layout" />
-
-        <Button Grid.Column="5"
-                Name="CleanTargetDuplicatesButton"
-                Content="Clean Dups"
-                Click="CleanTargetDuplicatesButton_Click"
-                Padding="12,8"
-                Margin="8,0,0,0"
-                FontSize="13"
-                Background="#C0392B"
-                Foreground="White"
-                ToolTip.Tip="Remove duplicate tracks from the target folder" />
-
-        <Button Grid.Column="6"
-          Name="RepairTargetButton"
-          Content="Repair USB"
-          Click="RepairTargetButton_Click"
+          Name="AdvancedButton"
+          Content="Avancé ▾"
+          Click="AdvancedButton_Click"
           Padding="12,8"
-          Margin="8,0,0,0"
+          Margin="20,0,0,0"
           FontSize="13"
-          Background="#D68910"
+          Background="#222222"
           Foreground="White"
-          ToolTip.Tip="Inspect the target USB drive and fix song ordering/layout issues without emptying it" />
+          ToolTip.Tip="Actions avancées: Réorganiser, Nettoyer les doublons, Réparer USB" />
       </Grid>
     </Border>
 
     <!-- ── Actions toolbar ── -->
-    <Border Grid.Row="2" Padding="16,10" Background="#ECF0F1">
+    <Border Grid.Row="2" Padding="16,10" Background="#1b1b1b">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Name="ConvertButton"
@@ -146,23 +124,23 @@
                   Padding="14,9"
                   FontSize="13"
                   FontWeight="Bold"
-                  Background="#E74C3C"
+                  Background="#1DB954"
                   Foreground="White"
                   IsEnabled="False"
                   ToolTip.Tip="Convert FLAC files to the configured output format" />
 
             <!-- Rename (Picard) removed -->
 
-          <Button Name="TransferButton"
-                  Content="Transfer to Target"
-                  Click="TransferButton_Click"
-                  Padding="14,9"
-                  FontSize="13"
-                  FontWeight="Bold"
-                  Background="#1F7A8C"
-                  Foreground="White"
-                  IsEnabled="False"
-                  ToolTip.Tip="Copy or transcode missing tracks to the target" />
+              <Button Name="TransferButton"
+              Content="Transfer to Target"
+              Click="TransferButton_Click"
+              Padding="14,9"
+              FontSize="13"
+              FontWeight="Bold"
+              Background="#138a36"
+              Foreground="White"
+              IsEnabled="False"
+              ToolTip.Tip="Copy or transcode missing tracks to the target" />
 
             <Button Name="PrepareUsbButton"
               Content="One-Step Prepare USB"
@@ -170,50 +148,50 @@
               Padding="14,9"
               FontSize="13"
               FontWeight="Bold"
-              Background="#6C5CE7"
+              Background="#138a36"
               Foreground="White"
               IsEnabled="False"
               ToolTip.Tip="Compare, optionally open Picard for tag fixes, then transfer everything in one guided flow" />
 
 
 
-          <CheckBox Name="CompilationCheckBox"
-                    IsVisible="False"
-                    IsChecked="True"
-                    VerticalAlignment="Center"
-                    ToolTip.Tip="When checked, albums with multiple artists are grouped under a 'Various Artists' folder">
-            <TextBlock Text="Group multi-artist albums under 'Various Artists'"
-                       Foreground="#333"
-                       FontStyle="Italic" />
-          </CheckBox>
+            <CheckBox Name="CompilationCheckBox"
+                  IsVisible="False"
+                  IsChecked="True"
+                  VerticalAlignment="Center"
+                  ToolTip.Tip="When checked, albums with multiple artists are grouped under a 'Various Artists' folder">
+                <TextBlock Text="Group multi-artist albums under 'Various Artists'"
+                     Foreground="#CCCCCC"
+                     FontStyle="Italic" />
+              </CheckBox>
         </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-          <TextBlock Name="ProgressCountText"
-                     Text=""
-                     VerticalAlignment="Center"
-                     Foreground="#333"
-                     FontWeight="Bold"
-                     Margin="0,0,8,0" />
+            <TextBlock Name="ProgressCountText"
+                         Text=""
+                         VerticalAlignment="Center"
+                         Foreground="#CCCCCC"
+                         FontWeight="Bold"
+                         Margin="0,0,8,0" />
 
-          <Button Name="SettingsButton"
-                  Content="⚙ Settings"
-                  Click="SettingsButton_Click"
-                  Padding="14,9"
-                  FontSize="13"
-                  FontWeight="Bold"
-                  Background="#34495E"
-                  Foreground="White"
-                  ToolTip.Tip="Configure which formats to keep and the output codec/bitrate" />
+            <Button Name="SettingsButton"
+              Content="⚙ Settings"
+              Click="SettingsButton_Click"
+              Padding="14,9"
+              FontSize="13"
+              FontWeight="Bold"
+              Background="#222222"
+              Foreground="White"
+              ToolTip.Tip="Configure which formats to keep and the output codec/bitrate" />
 
-          <Button Content="Quit"
-                  Click="QuitButton_Click"
-                  Padding="14,9"
-                  FontSize="13"
-                  FontWeight="Bold"
-                  Background="#2D3436"
-                  Foreground="White"
-                  ToolTip.Tip="Close the application" />
+            <Button Content="Quit"
+              Click="QuitButton_Click"
+              Padding="14,9"
+              FontSize="13"
+              FontWeight="Bold"
+              Background="#222222"
+              Foreground="White"
+              ToolTip.Tip="Close the application" />
         </StackPanel>
       </Grid>
     </Border>
@@ -221,16 +199,16 @@
     <!-- ── Content area: progress + stats + datagrid ── -->
     <Grid Grid.Row="3" Margin="16" RowDefinitions="Auto,Auto,*">
       <Border Grid.Row="0"
-              Name="ProgressBorder"
-              Padding="15"
-              Background="#ECF0F1"
-              Margin="0,0,0,10"
-              IsVisible="False">
+          Name="ProgressBorder"
+          Padding="15"
+          Background="#1f1f1f"
+          Margin="0,0,0,10"
+          IsVisible="False">
         <Grid RowDefinitions="Auto,Auto,Auto,Auto">
           <TextBlock Grid.Row="0"
                      Name="ProgressStatusText"
                      Text="Working..."
-                     Foreground="#333"
+             Foreground="#CCCCCC"
                      FontWeight="Bold"
                      Margin="0,0,0,8" />
 
@@ -244,7 +222,7 @@
           <TextBlock Grid.Row="2"
                      Name="CurrentFileText"
                      Text=""
-                     Foreground="#555"
+                     Foreground="#AAAAAA"
                      FontSize="12"
                      HorizontalAlignment="Center"
                      Margin="0,0,0,8" />
@@ -263,7 +241,7 @@
         </Grid>
       </Border>
 
-      <Border Grid.Row="1" Background="#3498DB" Padding="10,8" CornerRadius="5" Margin="0,0,0,10">
+      <Border Grid.Row="1" Background="#0b6b3f" Padding="10,8" CornerRadius="5" Margin="0,0,0,10">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="40">
           <StackPanel>
             <TextBlock Text="Total Files" Foreground="White" FontSize="11" HorizontalAlignment="Center" />

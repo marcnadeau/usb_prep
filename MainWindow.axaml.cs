@@ -1344,6 +1344,54 @@ public partial class MainWindow : Window
             prepareUsbButton.IsEnabled = hasSource && hasTarget && hasFiles;
     }
 
+    private async void AdvancedButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var menu = new Window
+        {
+            Title = "Actions avancées",
+            Width = 320,
+            Height = 220,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false
+        };
+
+        var reorganize = new Button { Content = "Réorganiser (Album/Track)", Margin = new Thickness(0, 6, 0, 6) };
+        var clean = new Button { Content = "Nettoyer les doublons", Margin = new Thickness(0, 6, 0, 6) };
+        var repair = new Button { Content = "Réparer USB", Margin = new Thickness(0, 6, 0, 6) };
+        var cancel = new Button { Content = "Annuler", Margin = new Thickness(0, 12, 0, 0) };
+
+        var tcs = new TaskCompletionSource<string?>();
+        reorganize.Click += (_, _) => { tcs.TrySetResult("reorganize"); menu.Close(); };
+        clean.Click += (_, _) => { tcs.TrySetResult("clean"); menu.Close(); };
+        repair.Click += (_, _) => { tcs.TrySetResult("repair"); menu.Close(); };
+        cancel.Click += (_, _) => { tcs.TrySetResult(null); menu.Close(); };
+
+        menu.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Children = { reorganize, clean, repair, cancel }
+        };
+
+        if (TopLevel.GetTopLevel(this) is Window owner)
+            await menu.ShowDialog(owner);
+        else
+            menu.Show();
+
+        var choice = await tcs.Task;
+        if (choice == "reorganize")
+        {
+            ReorganizeButton_Click(this, new RoutedEventArgs());
+        }
+        else if (choice == "clean")
+        {
+            CleanTargetDuplicatesButton_Click(this, new RoutedEventArgs());
+        }
+        else if (choice == "repair")
+        {
+            RepairTargetButton_Click(this, new RoutedEventArgs());
+        }
+    }
+
     private async Task ShowInfoDialogAsync(string title, string message)
     {
         var dialog = new Window
