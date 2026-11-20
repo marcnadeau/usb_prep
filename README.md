@@ -1,177 +1,88 @@
 # USB Music Prep
 
-A cross-platform desktop application built with Avalonia and .NET 10 to prepare audio files for USB playback in a car head unit.
+Application de bureau Avalonia / .NET 10 pour préparer une bibliothèque musicale sur une clé USB, sous Linux et Windows.
 
-## Goal
+## Parcours principal
 
-Prepare a clean, car-friendly USB music library by:
-- Scanning a source music folder and a target USB drive
-- Comparing source and target by track metadata to identify missing files
-- Transferring selected or missing tracks to the USB drive
-- Choosing which formats stay as-is and which are transcoded before copying
-- Selecting the output container/codec and bitrate used for transcodes
-- Grouping albums in consistent folders and renaming files in a predictable order
-- Cleaning up empty folders after moves
+**Source + destination USB → Analyser → Vérifier → Préparer l’USB → Bilan**
 
-## Features
+1. **Source** : choisir le dossier de musique ou coller son chemin. Les originaux restent inchangés pendant la préparation USB.
+2. **Destination USB** : choisir le dossier de destination. Les deux dossiers doivent être distincts et non imbriqués.
+3. **Paramètres** : vérifier le profil affiché. Les formats cochés sont copiés sans réencodage ; les autres sont convertis directement vers la destination.
+4. **Analyser** : l’application analyse la source et l’USB, puis compare les pistes à partir des tags locaux. Aucune écriture n’a lieu à cette étape.
+5. **Vérifier** : consulter le résumé et la colonne **État USB** :
+   - **À ajouter** : piste absente de l’USB et admissible à la préparation ;
+   - **Présent sur l’USB** : piste déjà identifiée sur la destination ;
+   - **Doublon source** : autre fichier portant la même identité de piste ;
+   - **Tags inconnus** : identité de piste inexploitable.
+6. Par défaut, toutes les pistes **À ajouter** sont préparées. Pour un sous-ensemble, sélectionner les lignes avec Ctrl/Shift puis cocher **Limiter à la sélection du tableau**. Le résumé indique le nombre réellement admissible : les pistes présentes et les doublons restent exclus.
+7. **Préparer l’USB** : confirmer la destination, la portée et le nombre de copies/conversions. FFmpeg et le codec choisi sont vérifiés avant toute conversion ; aucune piste à convertir n’est ignorée silencieusement faute de FFmpeg.
+8. Consulter le **bilan** : copiées, converties, ignorées, échecs ou interruption. La comparaison USB est ensuite actualisée ; le bilan reste visible séparément.
 
-- **Dual Folder Selection**: Separate **Source** and **Target** browse buttons; action buttons are enabled as the workflow progresses
-- **Conversion Settings**: Pick the keep formats, output format, codec, and bitrate from the **⚙ Settings** window
-- **Audio File Detection**: Detects MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, and ALAC files
-- **Metadata Display**: Grid shows Artist, Album, Title, Format, Size, and Compare status for each file
-- **Source/Target Comparison**:
-  - Scans both folders and matches tracks by `artist | album | title` metadata key
-  - Falls back to filename-based key when tags are incomplete
-  - Classifies each source file as **Missing**, **On target**, or **Unknown tags**
-  - Shows summary counts in the status bar after compare
-- **Smart Transfer**:
-  - Transfer **selected rows** (multi-select in the file grid) or all **Missing** files after a compare
-  - If no selection and no compare results, offers to transfer all scanned files
-  - Formats selected in **keep formats** are copied directly (no re-encoding)
-  - All other formats are transcoded with the configured FFmpeg output settings before copy
-  - **Per-file conflict prompt** when a file already exists at the destination: Overwrite / Skip / Cancel transfer
-  - Preserves source folder structure under the target root
-  - Progress bar, file counter, and Stop/cancel support
-  - Transfer summary: Copied / Converted / Skipped / Failed counts
-- **Standalone Conversion**:
-  - Converts FLAC files to the configured output format
-  - Uses the configured bitrate and codec
-  - Uses FFmpeg for reliable conversion
-  - Shows real-time FFmpeg logs in a dedicated console window
-  - Stop button with immediate process kill
-  - Keeps the original FLAC files in place and renames the generated output into Picard-style folders
-- **Target Maintenance**:
-  - **Reorganize** renames and sorts audio files on the target into Album/Track layout and removes now-empty source folders
-  - **Clean Dups** removes duplicate tracks detected by metadata key
-- **Picard-Style Organization**:
-  - Used by rename/reorganize workflows to place files into metadata-based album folders
-  - Folder: `Album` for reorganize workflow (`AlbumArtist/Album` is used by Picard rename)
-  - File: `TrackNumber - Title` (multi-disc: `DiscNumber-TrackNumber - Title`)
-  - Detects compilations and groups them correctly
-  - Cleans up now-empty source directories after moves
-- **Statistics Dashboard**: Total files, MP3 count, FLAC count, total size
-- **Recursive Scanning**: Scans all subfolders within the selected directory
+Changer un dossier ou enregistrer un profil invalide la comparaison : il faut **Analyser** à nouveau. Utiliser **Réanalyser** après des modifications externes des tags ou du contenu des dossiers. Les actions concurrentes sont désactivées pendant le traitement.
 
-## Supported Formats
+## Métadonnées et organisation
 
-### Scan & Compare (source and target)
-MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, ALAC
+- Formats analysés : MP3, M4A, FLAC, WAV, AAC, OGG, WMA, AIFF, ALAC.
+- Comparaison par clé `artiste | album | titre`. En l’absence de tags exploitables, le nom de fichier peut servir de repli : la correspondance n’est alors pas garantie.
+- Le résumé signale séparément les tags incomplets ; cela ne signifie pas nécessairement **Tags inconnus** dans le tableau.
+- Le transfert organise les fichiers en `AlbumArtist/Album/nom-original` (l’artiste de piste, p. ex. « Weezer ft. Wednesday », ne crée donc plus de dossier séparé), ou `Album/nom-original` pour les albums « Various Artists » ou, sans album artist, les pistes à plusieurs interprètes. Il ne reproduit pas l’arborescence source.
+- **Album artist absent** : avant toute écriture, l’application interroge l’API MusicBrainz (une recherche par album, 1 requête/s) et utilise l’artiste de la meilleure correspondance exacte (score ≥ 90). La valeur est inscrite dans la copie sur l’USB ; la source n’est jamais modifiée. Si un album est introuvable ou si le réseau échoue, une confirmation propose de continuer avec l’artiste de la piste.
+- Les collisions de noms produisent un suffixe numérique, sans dialogue d’écrasement. Les pistes déjà identifiées sur l’USB ne sont pas recopiées.
+- La conversion préserve les métadonnées locales via FFmpeg. Le traitement est séquentiel ; l’ordre physique final dépend aussi du système de fichiers et du lecteur.
 
-### Direct Copy (no conversion)
-MP3 (.mp3), M4A (.m4a)
+**Picard n’est plus lancé par l’application.** La lecture des tags et le nommage local fonctionnent sans éditeur externe. MusicBrainz n’est utilisé que pour retrouver l’album artist manquant ; l’identification par empreinte (AcoustID, `MusicBrainzTagger.cs`) reste inactive.
 
-### Converted on Transfer
-Any format not checked in the keep list → configured output format/codec/bitrate
+## Paramètres
 
-## Prerequisites
+Configurer les formats à conserver, le format de sortie (MP3 ou M4A/AAC), le codec et le débit. Si aucun format de copie n’est coché, les valeurs MP3/M4A par défaut sont rétablies. Fraunhofer AAC est proposé uniquement si FFmpeg expose `libfdk_aac` ; sinon utiliser AAC natif.
 
-- .NET 10.0 SDK or later
-- Windows or Linux
-- **FFmpeg** — required only when converting non-MP3/M4A files
-  - Download from: https://ffmpeg.org/download.html
-  - Make sure `ffmpeg` is in your system PATH
+Le profil est enregistré dans le dossier de données utilisateur `usb_prep/conversion_settings.json`. Une préférence de format ne garantit pas la compatibilité avec votre autoradio.
 
-## Building & Running
+## Progression et arrêt
 
-```bash
-dotnet restore
-dotnet build
-dotnet run
-```
+**Arrêter** interrompt l’analyse ou demande l’arrêt du transfert, et termine le processus FFmpeg actif. La progression du transfert est par fichier, pas un pourcentage précis à l’intérieur d’un long fichier. Une copie en cours finit avant l’arrêt ; les fichiers déjà terminés restent sur l’USB. Les sorties de conversion incomplètes sont supprimées si possible ; consulter **Logs FFmpeg** en cas d’erreur de nettoyage.
 
-## Quick Launchers
+Les logs sont consultables à la demande, sans fenêtre imposée pendant la préparation principale.
 
-- Linux: run `./launch-linux.sh`
-- Windows: run `launch-windows.bat`
+## Outils avancés
 
-Both launchers run the app from the repository root with:
+Ces outils ne sont pas des étapes nécessaires du parcours principal :
 
-```text
-dotnet run --project MediaFileAnalyzer.csproj -c Debug
-```
+- **Convertir les FLAC dans la source** : crée et organise les sorties dans la source à partir des tags locaux, en conservant les FLAC. Des sorties existantes peuvent être remplacées ; une confirmation spécifique avertit de ce comportement. Relancer l’analyse après utilisation.
+- **USB : regrouper par album** : déplace les fichiers déjà sur la destination dans des dossiers Album, conserve leurs noms et nettoie les dossiers vides. Cette disposition est distincte de celle du transfert normal.
+- **USB : nettoyer les doublons** : prévisualise les doublons identifiés par métadonnées avant suppression.
+- **USB : inspecter et réparer** : prévisualise les corrections de disposition et d’ordre avant application.
 
-## How to Use
+Faire une sauvegarde avant maintenance. Les fonctions historiques de réorganisation ne sont pas toutes interruptibles à l’intérieur d’un déplacement ; l’arrêt n’est pas une restauration des modifications déjà réalisées.
 
-### Basic scan & convert
-1. Click **Source Browse...** and select your music folder
-2. Click **Scan**
-3. If FLAC files are found, **Convert FLAC to ...** is enabled — click it to start conversion
-4. Use **Rename (Picard)** to organize files into `Artist/Album/Track - Title` structure
+## Installation et lancement
 
-### Settings
-1. Click **Settings** to open the conversion settings window
-2. Choose which formats should be copied directly
-3. Choose the output format and codec for every other format
-4. Set the target bitrate
-5. If FFmpeg exposes `libfdk_aac`, the settings window will offer Fraunhofer AAC as an option for M4A output
+- .NET 10 SDK pour compiler et lancer depuis les sources.
+- Windows ou Linux avec une session graphique.
+- FFmpeg dans le PATH, nécessaire uniquement pour les formats qui doivent être convertis, avec l’encodeur choisi disponible.
 
-### Transfer to USB (new workflow)
-1. Click **Source Browse...** → select your music library folder → **Scan**
-2. Click **Target Browse...** → select the USB drive (or any destination folder)
-3. Click **Compare** to see which source tracks are missing on the target
-4. The **Compare** column in the grid updates to *Missing*, *On target*, or *Unknown tags*
-5. Optionally select specific rows (Ctrl+click / Shift+click) to transfer a subset
-6. Click **Transfer to Target**
-7. If unsupported formats are included, they will be transcoded using the configured output format
-8. Resolve any file conflicts per-file: **Yes** overwrite, **No** skip, **Cancel** stop transfer
-9. A summary dialog reports Copied / Converted / Skipped / Failed counts
+Depuis le dépôt : `dotnet restore`, `dotnet build`, puis `dotnet run`.
+Les scripts `launch-linux.sh` et `launch-windows.bat` lancent le projet en Debug.
 
-## Installation Notes
+## Dépannage
 
-### FFmpeg on Linux
-```bash
-sudo apt install ffmpeg        # Debian/Ubuntu
-sudo dnf install ffmpeg        # Fedora
-sudo pacman -S ffmpeg          # Arch
-```
+- **Conversion indisponible** : installer FFmpeg avec le codec demandé, changer de codec dans Paramètres ou conserver les formats concernés sans conversion.
+- **Correspondances incorrectes** : compléter les tags locaux puis réanalyser. Les noms de fichiers seuls ne permettent pas une identification fiable.
+- **Échecs de préparation** : vérifier permissions, espace libre et logs FFmpeg. Le bilan n’efface pas les copies réussies.
+- **Sélecteur de dossiers Linux** : en cas d’échec du portail/D-Bus, un dialogue externe `zenity`, `qarma` ou `kdialog` est tenté.
 
-### FFmpeg on Windows
-```powershell
-winget install FFmpeg
-# or
-choco install ffmpeg
-```
+Pour les autoradios, vérifier les formats acceptés et le système de fichiers (FAT32 ou exFAT selon le modèle), garder une profondeur de dossiers raisonnable et tester quelques albums avant une grosse préparation.
 
-## Project Structure
+## Structure
 
-- `MainWindow.axaml` / `MainWindow.axaml.cs` — UI and all scan, compare, transfer, convert, rename workflows
-- `FileOrganizer.cs` — Reorganize workflow: metadata extraction, Artist/Album routing, file moves, empty-folder cleanup
-- `FileNamer.cs` — Picard-style naming, compilation detection, empty-folder cleanup
-- `FfmpegConsoleWindow.axaml` / `FfmpegConsoleWindow.axaml.cs` — Real-time FFmpeg log viewer
-- `MediaAnalyzer.cs` — Audio file analysis
-- `App.axaml` / `App.axaml.cs` — Application entry point
-- `MediaFileAnalyzer.csproj` — Project configuration (net10.0, Avalonia)
+- `MainWindow.axaml` / `MainWindow.axaml.cs` : parcours, analyse, comparaison, transfert et outils avancés.
+- `SettingsWindow.axaml` / `SettingsWindow.axaml.cs`, `ConversionSettings.cs` : profil et détection des codecs.
+- `FileOrganizer.cs` : réorganisation locale, déplacements et nettoyage.
+- `FileNamer.cs` : nommage basé sur les tags et détection des compilations (aucun lancement Picard).
+- `FfmpegConsoleWindow.axaml` / `FfmpegConsoleWindow.axaml.cs` : logs.
+- `MusicBrainzTagger.cs` : code dormant, intégration future hors du parcours actuel.
 
-## Conversion Details
+## Licence
 
-- **Quality**: configurable bitrate
-- **Codec**: configurable per output format
-- **Metadata**: Preserved from source file by FFmpeg
-- **Processing**: Sequential (one file at a time for stability and cancellability)
-
-## Car USB Tips
-
-- Format USB drives as `FAT32` (or `exFAT` if your car supports it)
-- Keep folder depth reasonable and filenames simple
-- Prefer ID3v2.3-compatible tags for older head units
-- Run **Compare** first to only transfer what's actually missing
-
-## Troubleshooting
-
-### FFmpeg not found
-- Ensure FFmpeg is installed and `ffmpeg -version` works in a terminal
-- The app will warn you before attempting any conversion
-
-### Compare shows everything as "Unknown tags"
-- Your source files may have missing or incomplete ID3/metadata tags
-- Use a tag editor (e.g. MusicBrainz Picard, beets) to add Artist, Album, and Title tags
-- Files with unknown tags still appear in the grid and can be selected for transfer manually
-
-### Transfer fails or shows errors
-- Check write permissions on the target folder/USB drive
-- Ensure sufficient free space on the target
-- Review the FFmpeg console window for conversion-specific errors
-
-## License
-
-This project is open source and available for personal and commercial use.
+Projet open source utilisable à des fins personnelles et commerciales.

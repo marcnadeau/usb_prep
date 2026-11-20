@@ -29,6 +29,9 @@ public partial class MainWindow : Window
     private string _currentScanPath = string.Empty;
     private string _targetPath = string.Empty;
     private bool _hasComparisonResults;
+    private bool _isBusy;
+    private TransferSummary? _lastTransferSummary;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _resolvedAlbumArtists = new(StringComparer.OrdinalIgnoreCase);
     private Avalonia.Controls.DataGrid? _filesDataGrid;
     private ConversionSettings _conversionSettings = ConversionSettingsStore.Load();
     private FfmpegConsoleWindow? _ffmpegConsoleWindow;
@@ -47,10 +50,49 @@ public partial class MainWindow : Window
                 _filesDataGrid.ItemsSource = _mediaFiles;
 
             RefreshConversionUi();
+            FolderPathTextBox.PropertyChanged += (_, change) =>
+            {
+                if (change.Property != TextBox.TextProperty || _isBusy) return;
+                _currentScanPath = FolderPathTextBox.Text?.Trim() ?? string.Empty;
+                InvalidateAnalysis(clearSource: true);
+            };
+            _filesDataGrid!.SelectionChanged += (_, _) => UpdateWorkflowSummary();
+            UseSelectionCheckBox.IsCheckedChanged += (_, _) => UpdateWorkflowSummary();
+            UpdateActionAvailability();
         };
     }
 
-    private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+    private void InitializeComponent()
+    {
+        AvaloniaXamlLoader.Load(this);
+        // The hand-written loader does not initialize source-generated named fields.
+        FolderPathTextBox = this.FindControl<TextBox>("FolderPathTextBox")!;
+        TargetFolderPathTextBox = this.FindControl<TextBox>("TargetFolderPathTextBox")!;
+        BrowseSourceButton = this.FindControl<Button>("BrowseSourceButton")!;
+        BrowseTargetButton = this.FindControl<Button>("BrowseTargetButton")!;
+        CompareButton = this.FindControl<Button>("CompareButton")!;
+        PrepareUsbButton = this.FindControl<Button>("PrepareUsbButton")!;
+        ConvertButton = this.FindControl<Button>("ConvertButton")!;
+        SettingsButton = this.FindControl<Button>("SettingsButton")!;
+        AdvancedButton = this.FindControl<Button>("AdvancedButton")!;
+        CompilationCheckBox = this.FindControl<CheckBox>("CompilationCheckBox")!;
+        UseSelectionCheckBox = this.FindControl<CheckBox>("UseSelectionCheckBox")!;
+        FilesDataGrid = this.FindControl<Avalonia.Controls.DataGrid>("FilesDataGrid")!;
+        WorkflowSummaryText = this.FindControl<TextBlock>("WorkflowSummaryText")!;
+        ProfileText = this.FindControl<TextBlock>("ProfileText")!;
+        ResultText = this.FindControl<TextBlock>("ResultText")!;
+        StatusText = this.FindControl<TextBlock>("StatusText")!;
+        TotalFilesText = this.FindControl<TextBlock>("TotalFilesText")!;
+        ImageCountText = this.FindControl<TextBlock>("ImageCountText")!;
+        VideoCountText = this.FindControl<TextBlock>("VideoCountText")!;
+        TotalSizeText = this.FindControl<TextBlock>("TotalSizeText")!;
+        ProgressBorder = this.FindControl<Border>("ProgressBorder")!;
+        ConversionProgressBar = this.FindControl<ProgressBar>("ConversionProgressBar")!;
+        ProgressStatusText = this.FindControl<TextBlock>("ProgressStatusText")!;
+        CurrentFileText = this.FindControl<TextBlock>("CurrentFileText")!;
+        ProgressCountText = this.FindControl<TextBlock>("ProgressCountText")!;
+        StopButton = this.FindControl<Button>("StopButton")!;
+    }
 
     private void EnsureFfmpegConsoleWindow()
     {
@@ -61,6 +103,13 @@ public partial class MainWindow : Window
 
         _ffmpegConsoleWindow = new FfmpegConsoleWindow();
         _ffmpegConsoleWindow.Closed += (_, _) => _ffmpegConsoleWindow = null;
+    }
+
+    private void ShowLogsButton_Click(object? sender, RoutedEventArgs e)
+    {
+        EnsureFfmpegConsoleWindow();
+        if (!_ffmpegConsoleWindow!.IsVisible) _ffmpegConsoleWindow.Show(this);
+        _ffmpegConsoleWindow.Activate();
     }
 
     private void AppendFfmpegLog(string line)
@@ -88,8 +137,9 @@ public partial class MainWindow : Window
         var convertButton = ConvertButton ?? this.FindControl<Button>("ConvertButton");
         if (convertButton != null)
         {
-            convertButton.Content = $"Convert FLAC to {GetOutputFormatDisplayName()} ({GetBitrateLabel()})";
+            convertButton.Content = $"Convertir les FLAC dans la source → {GetOutputFormatDisplayName()} ({GetBitrateLabel()})";
         }
+        ProfileText.Text = $"Copie sans conversion : {GetKeepFormatsSummary()} · Autres formats : {GetOutputFormatDisplayName()}, {GetCodecDisplayName()}, {GetBitrateLabel()}";
     }
 
     private string GetOutputFormatDisplayName()
@@ -112,9 +162,7 @@ public partial class MainWindow : Window
 
     private string ResolveOutputCodecId()
     {
-        var availableCodecs = AudioConversionCatalog.GetCodecOptions(_conversionSettings.OutputFormat, fraunhoferAvailable: FFmpegHelper.IsFFmpegInstalled());
-        return availableCodecs.FirstOrDefault(codec => codec.Id.Equals(_conversionSettings.OutputCodec, StringComparison.OrdinalIgnoreCase))?.Id
-            ?? availableCodecs.First().Id;
+        return _conversionSettings.OutputCodec;
     }
 
     private string BuildTranscodeArguments(string sourcePath, string destinationPath)
@@ -135,7 +183,7 @@ public partial class MainWindow : Window
         if (stopButton != null)
         {
             stopButton.IsEnabled = false;
-            stopButton.Content = "Stopping...";
+            stopButton.Content = "Arrêt en cours…";
         }
 
         _operationCts?.Cancel();
@@ -170,11 +218,13 @@ public partial class MainWindow : Window
 
     private async void SettingsButton_Click(object? sender, RoutedEventArgs e)
     {
+        if (_isBusy) return;
         var dialog = new SettingsWindow(_conversionSettings);
         if (await dialog.ShowDialog<bool?>(this) == true)
         {
             _conversionSettings = ConversionSettingsStore.Load();
             RefreshConversionUi();
+            InvalidateAnalysis(clearSource: false);
         }
     }
 
@@ -186,7 +236,7 @@ public partial class MainWindow : Window
         {
             Title = title,
             Width = 560,
-            Height = 180,
+            SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false
         };
@@ -199,10 +249,11 @@ public partial class MainWindow : Window
         };
 
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var noButton = new Button { Content = "No", Width = 100, Margin = new Thickness(6,0) };
-        var yesButton = new Button { Content = "Yes", Width = 100, Margin = new Thickness(6,0) };
+        var noButton = new Button { Content = "Annuler", Width = 100, Margin = new Thickness(6,0) };
+        var yesButton = new Button { Content = "Confirmer", Width = 110, Margin = new Thickness(6,0) };
 
         var tcs = new TaskCompletionSource<bool>();
+        dialog.Closed += (_, _) => tcs.TrySetResult(false);
 
         noButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
         yesButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
@@ -383,7 +434,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ReorganizeButton_Click(object? sender, RoutedEventArgs e)
+    private async Task ReorganizeButton_Click(object? sender, RoutedEventArgs e)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
@@ -565,6 +616,7 @@ public partial class MainWindow : Window
         var repairButton = new Button { Content = "Repair USB", Width = 140, Margin = new Thickness(6, 0) };
 
         var tcs = new TaskCompletionSource<bool>();
+        dialog.Closed += (_, _) => tcs.TrySetResult(false);
         cancelButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
         repairButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
 
@@ -629,6 +681,7 @@ public partial class MainWindow : Window
         var cancelButton = new Button { Content = "Cancel", HorizontalAlignment = HorizontalAlignment.Right, Width = 120, Margin = new Thickness(0, 12, 0, 0) };
 
         var tcs = new TaskCompletionSource<RepairTargetMode?>();
+        dialog.Closed += (_, _) => tcs.TrySetResult(null);
         folderButton.Click += (_, _) => { tcs.TrySetResult(RepairTargetMode.FolderOrderOnly); dialog.Close(); };
         songsButton.Click += (_, _) => { tcs.TrySetResult(RepairTargetMode.SongsInFolders); dialog.Close(); };
         fullButton.Click += (_, _) => { tcs.TrySetResult(RepairTargetMode.FullRepair); dialog.Close(); };
@@ -790,7 +843,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void RepairTargetButton_Click(object? sender, RoutedEventArgs e)
+    private async Task RepairTargetButton_Click(object? sender, RoutedEventArgs e)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
@@ -848,7 +901,7 @@ public partial class MainWindow : Window
         await RepairTargetAsync(_targetPath, mode.Value);
     }
 
-    private async void CleanTargetDuplicatesButton_Click(object? sender, RoutedEventArgs e)
+    private async Task CleanTargetDuplicatesButton_Click(object? sender, RoutedEventArgs e)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
@@ -1068,6 +1121,7 @@ public partial class MainWindow : Window
         var deleteButton = new Button { Content = "Delete duplicates", Width = 160, Margin = new Thickness(6, 0) };
 
         var tcs = new TaskCompletionSource<bool>();
+        dialog.Closed += (_, _) => tcs.TrySetResult(false);
         cancelButton.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
         deleteButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
 
@@ -1126,6 +1180,7 @@ public partial class MainWindow : Window
 
     private async void BrowseButton_Click(object? sender, RoutedEventArgs e)
     {
+        if (_isBusy) return;
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider is not null)
         {
@@ -1133,10 +1188,10 @@ public partial class MainWindow : Window
             {
                 var folderPathTextBox = FolderPathTextBox ?? this.FindControl<TextBox>("FolderPathTextBox");
                 var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-
-                var selectedPath = await PickFolderWithLinuxFallbackAsync(
-                    topLevel,
-                    "Select a folder to scan for audio files");
+                string? selectedPath;
+                if (!BeginOperation()) return;
+                try { selectedPath = await PickFolderWithLinuxFallbackAsync(topLevel, "Choisir le dossier de musique source"); }
+                finally { EndOperation(); }
 
                 if (!string.IsNullOrWhiteSpace(selectedPath))
                 {
@@ -1148,7 +1203,7 @@ public partial class MainWindow : Window
 
                     if (statusText != null)
                     {
-                        statusText.Text = $"Folder selected: {selectedPath}";
+                        statusText.Text = $"Source choisie : {selectedPath}. Choisissez l’USB puis analysez.";
                     }
                 }
             }
@@ -1158,7 +1213,7 @@ public partial class MainWindow : Window
                 var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
                 if (statusText != null)
                 {
-                    statusText.Text = $"File browser error: {ex.Message}";
+                    statusText.Text = $"Erreur de sélection du dossier : {ex.Message}";
                 }
                 System.Diagnostics.Debug.WriteLine($"BrowseButton_Click exception: {ex}");
             }
@@ -1167,6 +1222,7 @@ public partial class MainWindow : Window
 
     private async void BrowseTargetButton_Click(object? sender, RoutedEventArgs e)
     {
+        if (_isBusy) return;
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider is not null)
         {
@@ -1176,18 +1232,19 @@ public partial class MainWindow : Window
                 var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
                 var compareButton = CompareButton ?? this.FindControl<Button>("CompareButton");
 
-                var selectedPath = await PickFolderWithLinuxFallbackAsync(
-                    topLevel,
-                    "Select a target folder (USB drive destination)");
+                string? selectedPath;
+                if (!BeginOperation()) return;
+                try { selectedPath = await PickFolderWithLinuxFallbackAsync(topLevel, "Choisir la destination USB"); }
+                finally { EndOperation(); }
 
                 if (!string.IsNullOrWhiteSpace(selectedPath))
                 {
                     _targetPath = selectedPath;
-                    _hasComparisonResults = false;
+                    InvalidateAnalysis(clearSource: false);
                     if (targetFolderPathTextBox != null)
                         targetFolderPathTextBox.Text = selectedPath;
                     if (statusText != null)
-                        statusText.Text = $"Target folder selected: {selectedPath}";
+                        statusText.Text = $"Destination USB choisie : {selectedPath}. Relancez l’analyse.";
                     UpdateActionAvailability();
                 }
             }
@@ -1195,7 +1252,7 @@ public partial class MainWindow : Window
             {
                 var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
                 if (statusText != null)
-                    statusText.Text = $"File browser error: {ex.Message}";
+                    statusText.Text = $"Erreur de sélection du dossier : {ex.Message}";
             }
         }
     }
@@ -1331,36 +1388,101 @@ public partial class MainWindow : Window
         bool hasSource = !string.IsNullOrWhiteSpace(_currentScanPath) && Directory.Exists(_currentScanPath);
         bool hasTarget = !string.IsNullOrWhiteSpace(_targetPath) && Directory.Exists(_targetPath);
         bool hasFiles = _mediaFiles.Count > 0;
+        FolderPathTextBox.IsEnabled = TargetFolderPathTextBox.IsEnabled = !_isBusy;
+        BrowseSourceButton.IsEnabled = BrowseTargetButton.IsEnabled = SettingsButton.IsEnabled = !_isBusy;
+        AdvancedButton.IsEnabled = !_isBusy;
+        CompareButton.IsEnabled = !_isBusy && hasSource && hasTarget;
+        PrepareUsbButton.Content = _hasComparisonResults ? "3. Préparer l’USB" : "2. Analyser";
+        PrepareUsbButton.IsEnabled = !_isBusy && hasSource && hasTarget && (!_hasComparisonResults || hasFiles);
+        ConvertButton.IsEnabled = !_isBusy && _mediaFiles.Any(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase));
+        UseSelectionCheckBox.IsEnabled = !_isBusy && _hasComparisonResults;
+        CompilationCheckBox.IsEnabled = !_isBusy;
+        FilesDataGrid.IsEnabled = !_isBusy;
+        UpdateWorkflowSummary();
+    }
 
-        var compareButton = CompareButton ?? this.FindControl<Button>("CompareButton");
-        var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
-        var prepareUsbButton = PrepareUsbButton ?? this.FindControl<Button>("PrepareUsbButton");
+    private void InvalidateAnalysis(bool clearSource)
+    {
+        _hasComparisonResults = false;
+        _lastTransferSummary = null;
+        ResultText.Text = string.Empty;
+        if (clearSource)
+        {
+            _mediaFiles.Clear();
+            _detectedCompilationAlbums.Clear();
+            TotalFilesText.Text = ImageCountText.Text = VideoCountText.Text = "0";
+            TotalSizeText.Text = "0 MB";
+            CompilationCheckBox.IsVisible = false;
+        }
+        foreach (var file in _mediaFiles) file.CompareStatus = "Non analysé";
+        RefreshGrid();
+        UpdateActionAvailability();
+    }
 
-        if (compareButton != null)
-            compareButton.IsEnabled = hasSource && hasTarget && hasFiles;
-        if (transferButton != null)
-            transferButton.IsEnabled = hasTarget && hasFiles;
-        if (prepareUsbButton != null)
-            prepareUsbButton.IsEnabled = hasSource && hasTarget && hasFiles;
+    private void RefreshGrid()
+    {
+        if (_filesDataGrid == null) return;
+        _filesDataGrid.ItemsSource = null;
+        _filesDataGrid.ItemsSource = _mediaFiles;
+    }
+
+    private List<MediaFileInfo> GetPreparationCandidates()
+    {
+        var scope = UseSelectionCheckBox.IsChecked == true ? GetSelectedMediaFiles() : _mediaFiles.ToList();
+        return scope.Where(f => f.CompareStatus == "À ajouter").ToList();
+    }
+
+    private void UpdateWorkflowSummary()
+    {
+        if (!_hasComparisonResults)
+        {
+            WorkflowSummaryText.Text = "1. Choisissez la source et la destination USB, puis analysez. Aucun fichier source n’est modifié.";
+            return;
+        }
+        var candidates = GetPreparationCandidates();
+        int conversions = candidates.Count(f => !IsKeptExtension(Path.GetExtension(f.FilePath)));
+        int incomplete = _mediaFiles.Count(f => f.HasIncompleteTags);
+        string scope = UseSelectionCheckBox.IsChecked == true
+            ? $"Sélection : {GetSelectedMediaFiles().Count} piste(s), {candidates.Count} admissible(s)"
+            : $"Toutes les pistes manquantes : {candidates.Count}";
+        WorkflowSummaryText.Text = $"2. Vérifiez : {_mediaFiles.Count(f => f.CompareStatus == "Présent sur l’USB")} présentes · {_mediaFiles.Count(f => f.CompareStatus == "À ajouter")} manquantes · {_mediaFiles.Count(f => f.CompareStatus == "Doublon source")} doublons source · {incomplete} tags incomplets (correspondance parfois basée sur le nom).\n{scope} → {candidates.Count - conversions} à copier, {conversions} à convertir. Les pistes présentes et doublons source sont exclus.";
+    }
+
+    private bool BeginOperation()
+    {
+        if (_isBusy) return false;
+        _isBusy = true;
+        UpdateActionAvailability();
+        return true;
+    }
+
+    private void EndOperation()
+    {
+        _isBusy = false;
+        UpdateActionAvailability();
     }
 
     private async void AdvancedButton_Click(object? sender, RoutedEventArgs e)
     {
+        if (_isBusy) return;
         var menu = new Window
         {
             Title = "Actions avancées",
-            Width = 320,
-            Height = 220,
+            Width = 580,
+            SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false
         };
 
-        var reorganize = new Button { Content = "Réorganiser (Album/Track)", Margin = new Thickness(0, 6, 0, 6) };
-        var clean = new Button { Content = "Nettoyer les doublons", Margin = new Thickness(0, 6, 0, 6) };
-        var repair = new Button { Content = "Réparer USB", Margin = new Thickness(0, 6, 0, 6) };
+        var convert = new Button { Content = "Convertir les FLAC dans la source (outil local)", IsEnabled = ConvertButton.IsEnabled, Margin = new Thickness(0, 6, 0, 6) };
+        var reorganize = new Button { Content = "USB : regrouper par album (noms conservés)", IsEnabled = Directory.Exists(_targetPath), Margin = new Thickness(0, 6, 0, 6) };
+        var clean = new Button { Content = "USB : nettoyer les doublons", IsEnabled = Directory.Exists(_targetPath), Margin = new Thickness(0, 6, 0, 6) };
+        var repair = new Button { Content = "USB : inspecter et réparer", IsEnabled = Directory.Exists(_targetPath), Margin = new Thickness(0, 6, 0, 6) };
         var cancel = new Button { Content = "Annuler", Margin = new Thickness(0, 12, 0, 0) };
 
         var tcs = new TaskCompletionSource<string?>();
+        menu.Closed += (_, _) => tcs.TrySetResult(null);
+        convert.Click += (_, _) => { tcs.TrySetResult("convert"); menu.Close(); };
         reorganize.Click += (_, _) => { tcs.TrySetResult("reorganize"); menu.Close(); };
         clean.Click += (_, _) => { tcs.TrySetResult("clean"); menu.Close(); };
         repair.Click += (_, _) => { tcs.TrySetResult("repair"); menu.Close(); };
@@ -1369,7 +1491,7 @@ public partial class MainWindow : Window
         menu.Content = new StackPanel
         {
             Margin = new Thickness(18),
-            Children = { reorganize, clean, repair, cancel }
+            Children = { new TextBlock { Text = "La préparation normale convertit directement vers l’USB.\nCes outils sont distincts et peuvent modifier les dossiers.", TextWrapping = Avalonia.Media.TextWrapping.Wrap }, convert, reorganize, clean, repair, cancel }
         };
 
         if (TopLevel.GetTopLevel(this) is Window owner)
@@ -1378,17 +1500,26 @@ public partial class MainWindow : Window
             menu.Show();
 
         var choice = await tcs.Task;
-        if (choice == "reorganize")
+        if (choice == "convert")
         {
-            ReorganizeButton_Click(this, new RoutedEventArgs());
+            await ConvertLocallyAsync();
         }
-        else if (choice == "clean")
+        else if (choice != null && BeginOperation())
         {
-            CleanTargetDuplicatesButton_Click(this, new RoutedEventArgs());
-        }
-        else if (choice == "repair")
-        {
-            RepairTargetButton_Click(this, new RoutedEventArgs());
+            try
+            {
+                if (choice == "reorganize") await ReorganizeButton_Click(this, new RoutedEventArgs());
+                else if (choice == "clean") await CleanTargetDuplicatesButton_Click(this, new RoutedEventArgs());
+                else if (choice == "repair") await RepairTargetButton_Click(this, new RoutedEventArgs());
+            }
+            catch (Exception ex) { StatusText.Text = $"Échec de la maintenance : {ex.Message}"; }
+            finally
+            {
+                _operationCts?.Dispose();
+                _operationCts = null;
+                InvalidateAnalysis(clearSource: false);
+                EndOperation();
+            }
         }
     }
 
@@ -1398,7 +1529,7 @@ public partial class MainWindow : Window
         {
             Title = title,
             Width = 580,
-            Height = 220,
+            SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false
         };
@@ -1418,6 +1549,7 @@ public partial class MainWindow : Window
         };
 
         var tcs = new TaskCompletionSource<bool>();
+        dialog.Closed += (_, _) => tcs.TrySetResult(false);
         okButton.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
 
         dialog.Content = new StackPanel
@@ -1442,89 +1574,7 @@ public partial class MainWindow : Window
         await tcs.Task;
     }
 
-    private static bool TryLaunchPicard(string folderPath)
-    {
-        var launchCandidates = new[]
-        {
-            (FileName: "picard", Args: Array.Empty<string>()),
-            (FileName: "musicbrainz-picard", Args: Array.Empty<string>()),
-            (FileName: "flatpak", Args: new[] { "run", "org.musicbrainz.Picard" })
-        };
-
-        foreach (var candidate in launchCandidates)
-        {
-            try
-            {
-                var processInfo = new ProcessStartInfo
-                {
-                    FileName = candidate.FileName,
-                    UseShellExecute = false
-                };
-
-                foreach (var arg in candidate.Args)
-                {
-                    processInfo.ArgumentList.Add(arg);
-                }
-
-                processInfo.ArgumentList.Add(folderPath);
-
-                var process = Process.Start(processInfo);
-                if (process != null)
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-                // Try next candidate.
-            }
-        }
-
-        return false;
-    }
-
-    private async Task<bool> PromptForPicardAndRescanAsync()
-    {
-        var wantsPicard = await ShowConfirmDialogAsync(
-            "Review tags in Picard?",
-            "Do you want to open MusicBrainz Picard now to review or correct tags before the transfer starts?");
-
-        if (!wantsPicard)
-        {
-            return true;
-        }
-
-        if (!TryLaunchPicard(_currentScanPath))
-        {
-            await ShowInfoDialogAsync(
-                "Picard not available",
-                "MusicBrainz Picard could not be launched automatically. Install Picard or continue without it.");
-
-            return await ShowConfirmDialogAsync(
-                "Continue without Picard?",
-                "Picard did not launch. Continue with compare and transfer anyway?");
-        }
-
-        await ShowInfoDialogAsync(
-            "Picard launched",
-            "Picard has been opened with your source folder. Make any tag fixes there, save them, then click OK here to rescan and continue.");
-
-        await RescanCurrentSourceAsync();
-        return true;
-    }
-
-    private async Task RescanCurrentSourceAsync()
-    {
-        var folderPathTextBox = FolderPathTextBox ?? this.FindControl<TextBox>("FolderPathTextBox");
-        if (folderPathTextBox != null)
-        {
-            folderPathTextBox.Text = _currentScanPath;
-        }
-
-        await RunSourceScanAsync(_currentScanPath);
-    }
-
-    private async Task RunSourceScanAsync(string folderPath)
+    private async Task RunSourceScanAsync(string folderPath, CancellationToken cancellationToken)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         var totalFilesText = TotalFilesText ?? this.FindControl<TextBlock>("TotalFilesText");
@@ -1540,9 +1590,10 @@ public partial class MainWindow : Window
         if (imageCountText != null) imageCountText.Text = "0";
         if (videoCountText != null) videoCountText.Text = "0";
         if (totalSizeText != null) totalSizeText.Text = "0 MB";
-        if (statusText != null) statusText.Text = "Scanning...";
+        if (statusText != null) statusText.Text = "Analyse de la source…";
 
-        var scannedFiles = await Task.Run(() => ScanFolder(folderPath));
+        var scannedFiles = await Task.Run(() => ScanFolder(folderPath, cancellationToken), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
 
         foreach (var mediaInfo in scannedFiles)
         {
@@ -1564,15 +1615,15 @@ public partial class MainWindow : Window
         if (imageCountText != null) imageCountText.Text = mp3Count.ToString();
         if (videoCountText != null) videoCountText.Text = flacCount.ToString();
         if (totalSizeText != null) totalSizeText.Text = FormatFileSize(totalSize);
-        if (statusText != null) statusText.Text = $"Scan complete. Found {totalFiles} audio file(s). FLAC files: {flacCount}";
-        if (convertButton != null) convertButton.IsEnabled = flacCount > 0;
+        if (statusText != null) statusText.Text = $"Source analysée : {totalFiles} fichier(s), dont {flacCount} FLAC.";
         UpdateActionAvailability();
 
         var compilationCheckBox = CompilationCheckBox ?? this.FindControl<CheckBox>("CompilationCheckBox");
         if (totalFiles > 0)
         {
             var allPaths = _mediaFiles.Select(f => f.FilePath).ToList();
-            _detectedCompilationAlbums = await Task.Run(() => FileNamer.DetectCompilationAlbums(allPaths));
+            _detectedCompilationAlbums = await Task.Run(() => FileNamer.DetectCompilationAlbums(allPaths), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             bool hasCompilations = _detectedCompilationAlbums.Count > 0;
             if (compilationCheckBox != null)
             {
@@ -1580,7 +1631,7 @@ public partial class MainWindow : Window
                 compilationCheckBox.IsChecked = hasCompilations;
             }
             if (hasCompilations && statusText != null)
-                statusText.Text += $" — {_detectedCompilationAlbums.Count} multi-artist album(s) detected.";
+                statusText.Text += $" — {_detectedCompilationAlbums.Count} compilation(s) détectée(s).";
         }
         else
         {
@@ -1589,7 +1640,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task<CompareResult?> RunCompareWorkflowAsync()
+    private async Task<CompareResult?> RunCompareWorkflowAsync(CancellationToken cancellationToken)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
@@ -1607,49 +1658,48 @@ public partial class MainWindow : Window
 
         if (_mediaFiles.Count == 0)
         {
-            if (statusText != null) statusText.Text = "Scan a source folder first.";
+            if (statusText != null) statusText.Text = "Aucun fichier audio trouvé dans la source.";
             return null;
         }
 
         if (progressBorder != null) progressBorder.IsVisible = true;
-        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
-        if (progressStatusText != null) progressStatusText.Text = "Comparing source and target metadata...";
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Arrêter"; }
+        if (progressStatusText != null) progressStatusText.Text = "Analyse de l’USB et comparaison des tags locaux…";
         if (currentFileText != null) currentFileText.Text = string.Empty;
         if (progressCountText != null) progressCountText.Text = string.Empty;
-        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
-        _operationCts?.Dispose();
-        _operationCts = new CancellationTokenSource();
-
+        if (conversionProgressBar != null) { conversionProgressBar.Value = 0; conversionProgressBar.IsIndeterminate = true; }
         try
         {
-            var result = await Task.Run(() => CompareSourceAndTarget(_operationCts.Token));
+            var result = await Task.Run(() => CompareSourceAndTarget(cancellationToken), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            await Dispatcher.UIThread.InvokeAsync(() => { });
+            RefreshGrid();
             _hasComparisonResults = true;
             if (statusText != null)
-                statusText.Text = $"Compare complete. Missing on target: {result.MissingCount}, already on target: {result.AlreadyOnTargetCount}, unknown metadata: {result.UnknownCount}, duplicates on target: {result.DuplicateOnTargetCount}, duplicates in source: {result.DuplicateInSourceCount}.";
-            var transferButton = TransferButton ?? this.FindControl<Button>("TransferButton");
-            if (transferButton != null) transferButton.IsEnabled = true;
+                statusText.Text = $"Analyse terminée : {result.MissingCount} à ajouter, {result.AlreadyOnTargetCount} présentes, {result.DuplicateInSourceCount} doublons source, {result.DuplicateOnTargetCount} doublons USB. Vérifiez le résumé avant de préparer.";
+            UpdateActionAvailability();
             return result;
         }
         catch (OperationCanceledException)
         {
-            if (statusText != null) statusText.Text = "Comparison stopped by user.";
+            _hasComparisonResults = false;
+            if (statusText != null) statusText.Text = "Analyse arrêtée. Relancez l’analyse avant de préparer.";
             return null;
         }
         catch (Exception ex)
         {
-            if (statusText != null) statusText.Text = $"Comparison failed: {ex.Message}";
+            _hasComparisonResults = false;
+            if (statusText != null) statusText.Text = $"Échec de l’analyse : {ex.Message}";
             return null;
         }
         finally
         {
             if (progressBorder != null) progressBorder.IsVisible = false;
             if (stopButton != null) stopButton.IsVisible = false;
-            _operationCts?.Dispose();
-            _operationCts = null;
         }
     }
 
-    private async Task TransferCandidatesAsync(List<MediaFileInfo> candidates, bool requireCompareConfirmation)
+    private async Task TransferCandidatesAsync(List<MediaFileInfo> candidates)
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
 
@@ -1659,19 +1709,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (requireCompareConfirmation && !_hasComparisonResults)
-        {
-            var proceed = await ShowConfirmDialogAsync(
-                "No compare results",
-                "You haven't compared the source and target. Proceeding may copy duplicates or unnecessary files. Continue?");
-
-            if (!proceed)
-            {
-                if (statusText != null) statusText.Text = "Transfer canceled — run Compare first.";
-                return;
-            }
-        }
-
         if (candidates.Count == 0)
         {
             if (statusText != null) statusText.Text = "No files are queued for transfer.";
@@ -1679,7 +1716,7 @@ public partial class MainWindow : Window
         }
 
         bool hasUnsupported = candidates.Any(c => !IsKeptExtension($".{c.Format}"));
-        bool convertUnsupported = hasUnsupported && FFmpegHelper.IsFFmpegInstalled();
+        bool convertUnsupported = hasUnsupported;
 
         candidates = OrderCandidatesForPhysicalWrite(candidates);
 
@@ -1690,36 +1727,34 @@ public partial class MainWindow : Window
         var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
 
         if (progressBorder != null) progressBorder.IsVisible = true;
-        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Stop"; }
-        if (progressStatusText != null) progressStatusText.Text = "Transferring and organizing files...";
+        if (stopButton != null) { stopButton.IsVisible = true; stopButton.IsEnabled = true; stopButton.Content = "Arrêter"; }
+        if (progressStatusText != null) progressStatusText.Text = "Préparation de l’USB : copie et conversion…";
         if (currentFileText != null) currentFileText.Text = string.Empty;
-        if (conversionProgressBar != null) conversionProgressBar.Value = 0;
+        if (conversionProgressBar != null) { conversionProgressBar.Value = 0; conversionProgressBar.IsIndeterminate = false; }
         _operationCts?.Dispose();
         _operationCts = new CancellationTokenSource();
 
         if (convertUnsupported)
         {
             EnsureFfmpegConsoleWindow();
-            if (_ffmpegConsoleWindow != null && !_ffmpegConsoleWindow.IsVisible)
-                _ffmpegConsoleWindow.Show(this);
-            _ffmpegConsoleWindow?.Activate();
             AppendFfmpegLog($"=== Transfer conversion started at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
         }
 
         try
         {
             var summary = await Task.Run(() => TransferFiles(candidates, convertUnsupported, _operationCts.Token));
-
+            _lastTransferSummary = summary;
             if (statusText != null)
-                statusText.Text = $"Transfer complete. Copied: {summary.Copied}, Converted: {summary.Converted}, Skipped: {summary.Skipped}, Failed: {summary.Failed}.";
+                statusText.Text = $"{(summary.Canceled ? "Préparation arrêtée" : "Préparation terminée")} : {summary.Copied} copiées, {summary.Converted} converties, {summary.Skipped} ignorées, {summary.Failed} échecs.";
+            ResultText.Text = statusText?.Text ?? string.Empty;
         }
         catch (OperationCanceledException)
         {
-            if (statusText != null) statusText.Text = "Transfer stopped by user.";
+            ResultText.Text = "Préparation arrêtée avant le transfert. Aucun bilan de fichiers disponible.";
         }
         catch (Exception ex)
         {
-            if (statusText != null) statusText.Text = $"Transfer failed: {ex.Message}";
+            ResultText.Text = $"Échec de la préparation : {ex.Message}";
         }
         finally
         {
@@ -1730,69 +1765,185 @@ public partial class MainWindow : Window
             if (convertUnsupported)
                 AppendFfmpegLog($"=== Transfer conversion ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
         }
+        // Refresh even after a partial transfer; keep the durable result separate from analysis status.
+        _hasComparisonResults = false;
+        if (_lastTransferSummary != null)
+        {
+            _operationCts = new CancellationTokenSource();
+            try { await RunCompareWorkflowAsync(_operationCts.Token); }
+            finally { _operationCts.Dispose(); _operationCts = null; }
+        }
+        if (ConversionProgressBar != null) ConversionProgressBar.IsIndeterminate = false;
     }
 
     private async void PrepareUsbButton_Click(object? sender, RoutedEventArgs e)
     {
-        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-
-        if (string.IsNullOrWhiteSpace(_currentScanPath) || !Directory.Exists(_currentScanPath))
+        if (!_hasComparisonResults) { await AnalyzeWorkflowAsync(); return; }
+        if (!BeginOperation()) return;
+        try
         {
-            if (statusText != null) statusText.Text = "Select and scan a source folder first.";
-            return;
+            var candidates = GetPreparationCandidates();
+            if (candidates.Count == 0)
+            {
+                StatusText.Text = "Aucune piste à ajouter dans cette portée. Sélectionnez des pistes manquantes ou décochez la portée sélection.";
+                return;
+            }
+            if (!await ValidateConversionAsync(candidates)) return;
+            var (resolvedCount, unresolved) = await ResolveMissingAlbumArtistsAsync(candidates);
+            if (unresolved == null) { StatusText.Text = "Résolution MusicBrainz arrêtée. Aucune écriture effectuée."; return; }
+            if (unresolved.Count > 0 && !await ShowConfirmDialogAsync("Album artist introuvable",
+                $"{unresolved.Count} album(s) sans album artist n’ont pas été trouvés sur MusicBrainz :\n{string.Join("\n", unresolved.Take(8))}{(unresolved.Count > 8 ? "\n…" : "")}\nContinuer en classant ces pistes selon l’artiste de la piste ?"))
+            { StatusText.Text = "Préparation annulée avant toute écriture."; return; }
+            int conversions = candidates.Count(f => !IsKeptExtension(Path.GetExtension(f.FilePath)));
+            var confirmed = await ShowConfirmDialogAsync("Préparer l’USB ?",
+                $"Portée : {(UseSelectionCheckBox.IsChecked == true ? "sélection du tableau" : "toutes les pistes manquantes")}\nDestination : {_targetPath}\n{candidates.Count - conversions} copie(s), {conversions} conversion(s).\nAlbum artist résolu via MusicBrainz : {resolvedCount} album(s).\n{ProfileText.Text}\nLes originaux restent inchangés. Les pistes déjà présentes et doublons source sont exclus.");
+            if (!confirmed) { StatusText.Text = "Préparation annulée avant toute écriture."; return; }
+            _lastTransferSummary = null;
+            ResultText.Text = string.Empty;
+            await TransferCandidatesAsync(candidates);
         }
-
-        if (string.IsNullOrWhiteSpace(_targetPath) || !Directory.Exists(_targetPath))
-        {
-            if (statusText != null) statusText.Text = "Select a target folder before starting the one-step prep.";
-            return;
-        }
-
-        if (_mediaFiles.Count == 0)
-        {
-            if (statusText != null) statusText.Text = "Scan a source folder first.";
-            return;
-        }
-
-        if (!await PromptForPicardAndRescanAsync())
-        {
-            return;
-        }
-
-        var compareResult = await RunCompareWorkflowAsync();
-        if (compareResult == null)
-        {
-            return;
-        }
-
-        var transferCandidates = _mediaFiles
-            .Where(m => string.Equals(m.CompareStatus, "Missing", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        if (transferCandidates.Count == 0)
-        {
-            await ShowInfoDialogAsync(
-                "Nothing to transfer",
-                "Everything already appears to be on the target, so there is nothing new to copy.");
-            return;
-        }
-
-        var proceed = await ShowConfirmDialogAsync(
-            "Start transfer now?",
-            $"{transferCandidates.Count} file(s) are missing on the target. Start the transfer and conversion step now?");
-
-        if (!proceed)
-        {
-            if (statusText != null) statusText.Text = "One-step prep stopped before transfer.";
-            return;
-        }
-
-        await TransferCandidatesAsync(transferCandidates, requireCompareConfirmation: false);
+        catch (Exception ex) { ResultText.Text = $"Échec de la préparation : {ex.Message}"; }
+        finally { EndOperation(); }
     }
 
     private async void CompareButton_Click(object? sender, RoutedEventArgs e)
     {
-        await RunCompareWorkflowAsync();
+        await AnalyzeWorkflowAsync();
+    }
+
+    private static string AlbumGroupKey(string filePath, string album)
+        => $"{Path.GetDirectoryName(filePath)}|{NormalizeKeyPart(album)}";
+
+    private static string? ReadAlbumArtist(string filePath)
+    {
+        try
+        {
+            using var file = TagLib.File.Create(filePath);
+            string? value = file.Tag.FirstAlbumArtist?.Trim();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+        catch { return null; }
+    }
+
+    private static string StripFeaturing(string artist)
+        => System.Text.RegularExpressions.Regex.Replace(artist, @"\s+[\(\[]?(ft\.?|feat\.?|featuring)\s.*$", string.Empty, System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+
+    // Looks up the album artist on MusicBrainz for every album lacking one, before any file is written.
+    private async Task<(int Resolved, List<string>? Unresolved)> ResolveMissingAlbumArtistsAsync(List<MediaFileInfo> candidates)
+    {
+        var unresolved = new List<string>();
+        int resolved = 0;
+        _operationCts = new CancellationTokenSource();
+        var token = _operationCts.Token;
+        ProgressBorder.IsVisible = StopButton.IsVisible = true;
+        StopButton.IsEnabled = true;
+        StopButton.Content = "Arrêter";
+        ConversionProgressBar.IsIndeterminate = false;
+        ConversionProgressBar.Value = 0;
+        try
+        {
+            var groups = await Task.Run(() => candidates
+                .Where(c => !string.IsNullOrWhiteSpace(c.Album) && ReadAlbumArtist(c.FilePath) == null)
+                .GroupBy(c => AlbumGroupKey(c.FilePath, c.Album))
+                .Where(g => !_resolvedAlbumArtists.ContainsKey(g.Key))
+                .Select(g => (Key: g.Key, Album: g.First().Album,
+                    Artist: StripFeaturing(g.GroupBy(c => c.Artist).OrderByDescending(a => a.Count()).First().Key),
+                    Tracks: _mediaFiles.Count(m => AlbumGroupKey(m.FilePath, m.Album) == g.Key)))
+                .ToList(), token);
+
+            ProgressStatusText.Text = "Recherche de l’album artist sur MusicBrainz (albums sans album artist)…";
+            for (int i = 0; i < groups.Count; i++)
+            {
+                token.ThrowIfCancellationRequested();
+                var group = groups[i];
+                CurrentFileText.Text = $"{group.Artist} — {group.Album}";
+                ProgressCountText.Text = $"{i + 1}/{groups.Count}";
+                ConversionProgressBar.Value = (i * 100) / groups.Count;
+                try
+                {
+                    string? credit = await AlbumArtistResolver.ResolveAsync(group.Artist, group.Album, group.Tracks, token);
+                    if (credit == null) unresolved.Add($"{group.Artist} — {group.Album}");
+                    else _resolvedAlbumArtists[group.Key] = credit;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    unresolved.Add($"{group.Artist} — {group.Album} ({ex.Message})");
+                }
+            }
+            resolved = candidates.Select(c => AlbumGroupKey(c.FilePath, c.Album)).Where(_resolvedAlbumArtists.ContainsKey).Distinct().Count();
+            return (resolved, unresolved);
+        }
+        catch (OperationCanceledException) { return (resolved, null); }
+        finally
+        {
+            ProgressBorder.IsVisible = StopButton.IsVisible = false;
+            ProgressCountText.Text = CurrentFileText.Text = string.Empty;
+            _operationCts?.Dispose();
+            _operationCts = null;
+        }
+    }
+
+    private static void WriteAlbumArtistTag(string path, string albumArtist)
+    {
+        using var file = TagLib.File.Create(path);
+        file.Tag.AlbumArtists = new[] { albumArtist };
+        file.Save();
+    }
+
+    private async Task<bool> ValidateConversionAsync(List<MediaFileInfo> candidates, bool forceConversion = false)
+    {
+        if (!forceConversion && candidates.All(f => IsKeptExtension(Path.GetExtension(f.FilePath)))) return true;
+        if (!await FfmpegCapabilityDetector.HasEncoderAsync(_conversionSettings.OutputCodec))
+        {
+            await ShowInfoDialogAsync("Conversion indisponible",
+                $"FFmpeg ou l’encodeur {_conversionSettings.OutputCodec} est indisponible. Installez FFmpeg avec cet encodeur ou choisissez un autre codec dans Paramètres. Aucun fichier n’a été écrit.");
+            return false;
+        }
+        return true;
+    }
+
+    private async Task AnalyzeWorkflowAsync()
+    {
+        if (!BeginOperation()) return;
+        try
+        {
+            if (!Directory.Exists(_currentScanPath) || !Directory.Exists(_targetPath))
+            {
+                StatusText.Text = "Choisissez une source et une destination existantes.";
+                return;
+            }
+            // Nested folders would make the source include its own generated output.
+            string source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_currentScanPath));
+            string target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_targetPath));
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (source.Equals(target, comparison) || target.StartsWith(Path.EndsInDirectorySeparator(source) ? source : source + Path.DirectorySeparatorChar, comparison) || source.StartsWith(Path.EndsInDirectorySeparator(target) ? target : target + Path.DirectorySeparatorChar, comparison))
+            {
+                StatusText.Text = "Source et destination doivent être distinctes, sans être imbriquées.";
+                _hasComparisonResults = false;
+                return;
+            }
+            _operationCts = new CancellationTokenSource();
+            ProgressBorder.IsVisible = StopButton.IsVisible = true;
+            StopButton.IsEnabled = true;
+            StopButton.Content = "Arrêter";
+            ConversionProgressBar.IsIndeterminate = true;
+            ProgressStatusText.Text = "Analyse de la source…";
+            CurrentFileText.Text = ProgressCountText.Text = string.Empty;
+            await RunSourceScanAsync(_currentScanPath, _operationCts.Token);
+            ProgressStatusText.Text = "Analyse de l’USB…";
+            await RunCompareWorkflowAsync(_operationCts.Token);
+        }
+        catch (OperationCanceledException) { _hasComparisonResults = false; StatusText.Text = "Analyse arrêtée. Relancez l’analyse avant de préparer."; }
+        catch (Exception ex) { _hasComparisonResults = false; StatusText.Text = $"Échec de l’analyse : {ex.Message}"; }
+        finally
+        {
+            ProgressBorder.IsVisible = StopButton.IsVisible = false;
+            ConversionProgressBar.IsIndeterminate = false;
+            _operationCts?.Dispose();
+            _operationCts = null;
+            EndOperation();
+        }
     }
 
     private CompareResult CompareSourceAndTarget(CancellationToken cancellationToken)
@@ -1817,35 +1968,36 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(key))
             {
                 unknown++;
-                status = "Unknown tags";
+                status = "Tags inconnus";
             }
             else if (!seenSourceKeys.Add(key))
             {
                 duplicateInSource++;
-                status = "Duplicate in source";
+                status = "Doublon source";
             }
             else if (targetKeys.Contains(key))
             {
                 alreadyOnTarget++;
-                status = "On target";
+                status = "Présent sur l’USB";
             }
             else
             {
                 missing++;
-                status = "Missing";
+                status = "À ajouter";
             }
 
             int percent = (processed * 100) / Math.Max(1, total);
+            int capturedProcessed = processed;
             string capturedFile = mediaFile.FileName;
-            string capturedStatus = status;
+            // Controls are locked during comparison; publish plain model data before the task completes.
+            mediaFile.CompareStatus = status;
             Dispatcher.UIThread.Post(() =>
             {
-                mediaFile.CompareStatus = capturedStatus;
                 var conversionProgressBar = ConversionProgressBar ?? this.FindControl<ProgressBar>("ConversionProgressBar");
                 var progressCountText = ProgressCountText ?? this.FindControl<TextBlock>("ProgressCountText");
                 var currentFileText = CurrentFileText ?? this.FindControl<TextBlock>("CurrentFileText");
                 if (conversionProgressBar != null) conversionProgressBar.Value = percent;
-                if (progressCountText != null) progressCountText.Text = $"{processed}/{total}";
+                if (progressCountText != null) progressCountText.Text = $"{capturedProcessed}/{total}";
                 if (currentFileText != null) currentFileText.Text = capturedFile;
             });
         }
@@ -1866,7 +2018,7 @@ public partial class MainWindow : Window
     {
         var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int duplicateCount = 0;
-        var files = Directory.GetFiles(basePath, "*.*", SearchOption.AllDirectories);
+        var files = Directory.EnumerateFiles(basePath, "*.*", SearchOption.AllDirectories);
 
         foreach (var file in files)
         {
@@ -1890,7 +2042,7 @@ public partial class MainWindow : Window
     private HashSet<string> BuildMetadataKeySet(string basePath, CancellationToken cancellationToken)
     {
         var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var files = Directory.GetFiles(basePath, "*.*", SearchOption.AllDirectories);
+        var files = Directory.EnumerateFiles(basePath, "*.*", SearchOption.AllDirectories);
 
         foreach (var file in files)
         {
@@ -1906,28 +2058,6 @@ public partial class MainWindow : Window
         }
 
         return keys;
-    }
-
-    private async void TransferButton_Click(object? sender, RoutedEventArgs e)
-    {
-        var selectedFiles = GetSelectedMediaFiles();
-        var candidates = selectedFiles.Count > 0
-            ? selectedFiles
-            : _mediaFiles.Where(m => string.Equals(m.CompareStatus, "Missing", StringComparison.OrdinalIgnoreCase)).ToList();
-
-        if (candidates.Count == 0)
-        {
-            if (selectedFiles.Count == 0 && !_hasComparisonResults)
-                candidates = _mediaFiles.ToList();
-        }
-        if (candidates.Count == 0)
-        {
-            var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-            if (statusText != null) statusText.Text = "Select files to transfer, or run compare so missing files can be transferred.";
-            return;
-        }
-
-        await TransferCandidatesAsync(candidates, requireCompareConfirmation: true);
     }
 
     private List<MediaFileInfo> GetSelectedMediaFiles()
@@ -2033,13 +2163,17 @@ public partial class MainWindow : Window
     {
         int copied = 0, converted = 0, skipped = 0, failed = 0;
         int total = candidates.Count;
-        var targetKeys = BuildMetadataKeySet(_targetPath, cancellationToken);
+        HashSet<string> targetKeys;
+        try { targetKeys = BuildMetadataKeySet(_targetPath, cancellationToken); }
+        catch (OperationCanceledException) { return new TransferSummary(0, 0, 0, 0, Canceled: true); }
         var pendingTransferKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (int i = 0; i < candidates.Count; i++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested)
+                return new TransferSummary(copied, converted, skipped, failed, Canceled: true);
             var media = candidates[i];
+            string? incompleteDestination = null;
 
             try
             {
@@ -2065,10 +2199,24 @@ public partial class MainWindow : Window
 
                 // Organize into Artist/Album directories (or Album only for compilations)
                 var (artist, album, title) = ReadTrackMetadata(media.FilePath);
-                bool isCompilation = ReadCompilationFlag(media.FilePath);
+                // Album artist (tag, else MusicBrainz result) decides the folder so featured artists don't split an album.
+                string? albumArtist = ReadAlbumArtist(media.FilePath);
+                bool albumArtistFromMusicBrainz = false;
+                if (albumArtist == null && _resolvedAlbumArtists.TryGetValue(AlbumGroupKey(media.FilePath, media.Album), out string? resolvedArtist))
+                {
+                    albumArtist = resolvedArtist;
+                    albumArtistFromMusicBrainz = true;
+                }
+                bool isCompilation = albumArtist != null
+                    ? albumArtist.Contains("various", StringComparison.OrdinalIgnoreCase)
+                    : ReadCompilationFlag(media.FilePath);
+                if (albumArtist != null) artist = albumArtist;
                 
                 string sanitizedArtist = FileOrganizer.SanitizeName(string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist);
                 string sanitizedAlbum = FileOrganizer.SanitizeName(string.IsNullOrWhiteSpace(album) ? "Unknown Album" : album);
+                // Dot-only metadata must never turn a destination component into a parent traversal.
+                if (sanitizedArtist is "." or ".." or "") sanitizedArtist = "Unknown Artist";
+                if (sanitizedAlbum is "." or ".." or "") sanitizedAlbum = "Unknown Album";
                 
                 string fileName = Path.GetFileName(media.FilePath);
                 if (!directCopy)
@@ -2078,6 +2226,10 @@ public partial class MainWindow : Window
                 string destinationPath = isCompilation
                     ? Path.Combine(_targetPath, sanitizedAlbum, fileName)
                     : Path.Combine(_targetPath, sanitizedArtist, sanitizedAlbum, fileName);
+                var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                string targetRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_targetPath)) + Path.DirectorySeparatorChar;
+                if (!Path.GetFullPath(destinationPath).StartsWith(targetRoot, pathComparison))
+                    throw new IOException("Le chemin de sortie sort du dossier de destination.");
                 
                 // Handle filename collisions
                 int counter = 1;
@@ -2106,8 +2258,16 @@ public partial class MainWindow : Window
                 }
                 else
                 {
+                    incompleteDestination = destinationPath;
                     ConvertFileToConfiguredOutput(media.FilePath, destinationPath, cancellationToken);
+                    incompleteDestination = null;
                     converted++;
+                }
+
+                if (albumArtistFromMusicBrainz)
+                {
+                    try { WriteAlbumArtistTag(destinationPath, albumArtist!); }
+                    catch (Exception ex) { AppendFfmpegLog($"Album artist non écrit dans {destinationPath} : {ex.Message}"); }
                 }
 
                 if (!string.IsNullOrWhiteSpace(metadataKey))
@@ -2118,10 +2278,13 @@ public partial class MainWindow : Window
             }
             catch (OperationCanceledException)
             {
-                throw;
+                DeleteIncompleteOutput(incompleteDestination);
+                return new TransferSummary(copied, converted, skipped, failed, Canceled: true);
             }
-            catch
+            catch (Exception ex)
             {
+                DeleteIncompleteOutput(incompleteDestination);
+                AppendFfmpegLog($"Échec de {media.FileName} : {ex.Message}");
                 failed++;
             }
             finally
@@ -2140,7 +2303,14 @@ public partial class MainWindow : Window
             }
         }
 
-        return new TransferSummary(copied, converted, skipped, failed);
+        return new TransferSummary(copied, converted, skipped, failed, Canceled: cancellationToken.IsCancellationRequested);
+    }
+
+    private void DeleteIncompleteOutput(string? path)
+    {
+        if (path == null) return;
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (Exception ex) { AppendFfmpegLog($"Fichier partiel à supprimer manuellement : {path} ({ex.Message})"); }
     }
 
     private void ConvertFileToConfiguredOutput(string sourcePath, string destinationPath, CancellationToken cancellationToken)
@@ -2168,15 +2338,20 @@ public partial class MainWindow : Window
                 AppendFfmpegLog(eventArgs.Data);
         };
 
-        process.BeginErrorReadLine();
-        process.WaitForExit();
-        cancellationToken.ThrowIfCancellationRequested();
-
-        lock (_ffmpegProcessLock)
-            _currentFfmpegProcess = null;
-
-        if (process.ExitCode != 0)
-            throw new Exception($"FFmpeg failed with exit code {process.ExitCode}");
+        try
+        {
+            using var registration = cancellationToken.Register(() =>
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { }
+            });
+            process.BeginErrorReadLine();
+            process.WaitForExit();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (process.ExitCode != 0)
+                throw new Exception($"FFmpeg failed with exit code {process.ExitCode}");
+        }
+        finally { lock (_ffmpegProcessLock) _currentFfmpegProcess = null; }
     }
 
     private (string Artist, string Album, string Title) ReadTrackMetadata(string filePath)
@@ -2211,6 +2386,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool HasIncompleteLocalTags(string filePath)
+    {
+        try
+        {
+            using var file = TagLib.File.Create(filePath);
+            return string.IsNullOrWhiteSpace(file.Tag.FirstPerformer)
+                || string.IsNullOrWhiteSpace(file.Tag.Album)
+                || string.IsNullOrWhiteSpace(file.Tag.Title);
+        }
+        catch { return true; }
+    }
+
     private string BuildTrackKey(string artist, string album, string title, string fileName)
     {
         string normalizedArtist = NormalizeKeyPart(artist);
@@ -2238,34 +2425,10 @@ public partial class MainWindow : Window
 
     private async void ScanButton_Click(object? sender, RoutedEventArgs e)
     {
-        var folderPathTextBox = FolderPathTextBox ?? this.FindControl<TextBox>("FolderPathTextBox");
-        var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
-
-        string folderPath = folderPathTextBox?.Text ?? string.Empty;
-
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
-        {
-            if (statusText != null)
-            {
-                statusText.Text = "Please enter a valid folder path.";
-            }
-            return;
-        }
-
-        try
-        {
-            await RunSourceScanAsync(folderPath);
-        }
-        catch (Exception ex)
-        {
-            if (statusText != null)
-            {
-                statusText.Text = $"Error scanning folder: {ex.Message}";
-            }
-        }
+        await AnalyzeWorkflowAsync();
     }
 
-    private List<MediaFileInfo> ScanFolder(string folderPath)
+    private List<MediaFileInfo> ScanFolder(string folderPath, CancellationToken cancellationToken)
     {
         var results = new List<MediaFileInfo>();
 
@@ -2274,6 +2437,7 @@ public partial class MainWindow : Window
 
         while (directoriesToScan.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var currentDirectory = directoriesToScan.Pop();
 
             string[] filesInDirectory;
@@ -2292,6 +2456,7 @@ public partial class MainWindow : Window
 
             foreach (var file in filesInDirectory)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var extension = Path.GetExtension(file);
                 if (!ScannableAudioExtensions.Contains(extension))
                 {
@@ -2313,7 +2478,8 @@ public partial class MainWindow : Window
                         Artist = metadata.Artist,
                         Album = metadata.Album,
                         Title = metadata.Title,
-                        CompareStatus = "Not compared"
+                        HasIncompleteTags = HasIncompleteLocalTags(file),
+                        CompareStatus = "Non analysé"
                     };
 
                     results.Add(mediaInfo);
@@ -2390,6 +2556,29 @@ public partial class MainWindow : Window
     }
 
     private async void ConvertButton_Click(object? sender, RoutedEventArgs e)
+        => await ConvertLocallyAsync();
+
+    private async Task ConvertLocallyAsync()
+    {
+        if (!BeginOperation()) return;
+        bool started = false;
+        try
+        {
+            var files = _mediaFiles.Where(f => f.Format.Equals("flac", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (files.Count == 0 || !await ValidateConversionAsync(files, forceConversion: true)) return;
+            if (!await ShowConfirmDialogAsync("Conversion locale — attention",
+                "Cet outil crée et organise les fichiers convertis DANS LA SOURCE. Des sorties existantes peuvent être remplacées. Les FLAC sont conservés. Ce traitement n’est pas nécessaire pour préparer l’USB. Continuer ?")) return;
+            started = true;
+            await RunLocalConversionAsync();
+        }
+        finally
+        {
+            if (started) InvalidateAnalysis(clearSource: true);
+            EndOperation();
+        }
+    }
+
+    private async Task RunLocalConversionAsync()
     {
         var statusText = StatusText ?? this.FindControl<TextBlock>("StatusText");
         var progressBorder = ProgressBorder ?? this.FindControl<Border>("ProgressBorder");
@@ -2455,11 +2644,11 @@ public partial class MainWindow : Window
 
         try
         {
-            await Task.Run(() => ConvertFlacToConfiguredOutput(flacFiles, compilationAlbumsForConvert, progress, _operationCts.Token));
+            int converted = await Task.Run(() => ConvertFlacToConfiguredOutput(flacFiles, compilationAlbumsForConvert, progress, _operationCts.Token));
 
             if (conversionProgressBar != null) conversionProgressBar.Value = 100;
             if (progressStatusText != null) progressStatusText.Text = "Conversion complete!";
-            if (statusText != null) statusText.Text = $"Conversion complete. Original FLAC files preserved. Re-scan folder to see new {GetOutputFormatDisplayName()} files.";
+            if (statusText != null) statusText.Text = $"Conversion locale terminée : {converted} réussite(s), {flacFiles.Count - converted} échec(s). FLAC conservés. Relancez l’analyse.";
             if (progressBorder != null) progressBorder.IsVisible = false;
             if (convertButton != null) convertButton.IsEnabled = true;
             if (stopButton != null) stopButton.IsVisible = false;
@@ -2487,7 +2676,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ConvertFlacToConfiguredOutput(List<MediaFileInfo> flacFiles, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
+    private int ConvertFlacToConfiguredOutput(List<MediaFileInfo> flacFiles, IReadOnlySet<string>? compilationAlbums, IProgress<ConversionProgress> progress, CancellationToken cancellationToken)
     {
         int filesCompleted = 0;
         int totalFiles = flacFiles.Count;
@@ -2591,6 +2780,7 @@ public partial class MainWindow : Window
         }
 
         AppendFfmpegLog($"\n=== Conversion ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+        return filesCompleted;
     }
 
     private static string FormatFileSize(long bytes)
@@ -2624,11 +2814,12 @@ public class MediaFileInfo
     public string Artist { get; set; } = string.Empty;
     public string Album { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+    public bool HasIncompleteTags { get; set; }
     public string CompareStatus { get; set; } = "Not compared";
 }
 
 public record CompareResult(int MissingCount, int AlreadyOnTargetCount, int UnknownCount, int DuplicateOnTargetCount, int DuplicateInSourceCount);
-public record TransferSummary(int Copied, int Converted, int Skipped, int Failed);
+public record TransferSummary(int Copied, int Converted, int Skipped, int Failed, bool Canceled = false);
 
 public class ConversionProgress
 {

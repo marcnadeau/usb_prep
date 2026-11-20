@@ -1,17 +1,17 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="MediaFileAnalyzer.SettingsWindow"
-        Title="Conversion Settings"
+        Title="Paramètres de préparation USB"
         Width="680"
         Height="700"
         WindowStartupLocation="CenterOwner"
         CanResize="True">
   <Grid RowDefinitions="Auto,*,Auto" Margin="20">
     <StackPanel Grid.Row="0" Spacing="6">
-      <TextBlock Text="Conversion Settings"
+      <TextBlock Text="Profil de copie et conversion"
                  FontSize="22"
                  FontWeight="Bold" />
-      <TextBlock Text="Choose which input formats stay as-is and which ones are transcoded with FFmpeg."
+      <TextBlock Text="Les formats cochés sont copiés sans modification. Les autres sont convertis directement vers l’USB ; les originaux sont conservés."
                  Foreground="#555"
                  TextWrapping="Wrap" />
     </StackPanel>
@@ -19,11 +19,11 @@
     <ScrollViewer Grid.Row="1" Margin="0,16,0,16">
       <StackPanel Spacing="18">
         <StackPanel Spacing="8">
-          <TextBlock Text="Formats to keep without transcoding"
+          <TextBlock Text="Formats à copier sans conversion"
                      FontWeight="SemiBold"
                      FontSize="15"
                      Foreground="#1F2933" />
-          <TextBlock Text="Unchecked formats will be converted using the output format below."
+          <TextBlock Text="Les formats décochés utilisent le profil ci-dessous. Si aucun format n’est coché, MP3 et M4A seront rétablis."
                      Foreground="#666"
                      TextWrapping="Wrap" />
           <StackPanel Name="KeepFormatsPanel" Spacing="6" />
@@ -32,7 +32,7 @@
         <Border Background="#F6F7F8" Padding="14" CornerRadius="6">
           <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="12">
             <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
-                       Text="Output format and codec"
+                       Text="Format et codec de sortie"
                        FontWeight="SemiBold"
                        FontSize="15"
                        Foreground="#1F2933" />
@@ -61,13 +61,13 @@
         <Border Background="#F6F7F8" Padding="14" CornerRadius="6">
           <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="12">
             <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
-                       Text="Quality"
+                       Text="Qualité"
                        FontWeight="SemiBold"
                        FontSize="15"
                        Foreground="#1F2933" />
 
             <TextBlock Grid.Row="1" Grid.Column="0"
-                       Text="Bitrate (kbps)"
+                       Text="Débit (kbps)"
                        VerticalAlignment="Center"
                        FontWeight="Bold"
                        Foreground="#1F2933" />
@@ -89,10 +89,10 @@
                 Orientation="Horizontal"
                 HorizontalAlignment="Right"
                 Spacing="10">
-      <Button Content="Cancel"
+      <Button Content="Annuler"
               Width="100"
               Click="CancelButton_Click" />
-      <Button Content="Save"
+      <Button Content="Enregistrer"
               Width="100"
               Background="#1F7A8C"
               Foreground="White"

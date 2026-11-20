@@ -82,8 +82,8 @@ public partial class SettingsWindow : Window
         if (availabilityText != null)
         {
             availabilityText.Text = _fraunhoferAvailable
-                ? "Fraunhofer AAC (libfdk_aac) is available on this machine."
-                : "Fraunhofer AAC is not available. AAC (native) will be offered instead.";
+                ? "Fraunhofer AAC (libfdk_aac) est disponible sur cette machine."
+                : "Fraunhofer AAC est indisponible. Le codec AAC natif est proposé à la place. La préparation vérifie l’encodeur avant toute conversion.";
         }
 
         RefreshCodecOptions();

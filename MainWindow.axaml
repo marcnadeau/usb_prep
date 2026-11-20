@@ -6,6 +6,8 @@
         Title="USB Music Prep"
         Height="700"
         Width="1100"
+        MinWidth="1000"
+        MinHeight="650"
         WindowStartupLocation="CenterScreen">
   <Grid>
     <Grid.RowDefinitions>
@@ -20,7 +22,7 @@
     <Border Grid.Row="0" Padding="16,12" Background="#1b1b1b">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto">
         <TextBlock Grid.Column="0"
-                   Text="Source:"
+                   Text="1. Source :"
                    VerticalAlignment="Center"
                    FontWeight="Bold"
                    Margin="0,0,10,0" />
@@ -33,20 +35,22 @@
            Background="#222222"
            Foreground="White"
            BorderBrush="#2f2f2f"
-                 PlaceholderText="Type or paste folder path here..." />
+                 PlaceholderText="Dossier de musique original (lecture seule pendant la préparation)…" />
 
           <Button Grid.Column="2"
-          Content="Browse..."
+          Name="BrowseSourceButton"
+          Content="Choisir…"
           Click="BrowseButton_Click"
           Padding="15,8"
           Margin="10,0,0,0"
           FontSize="14"
           Background="#222222"
           Foreground="White"
-          ToolTip.Tip="Select source music folder" />
+          ToolTip.Tip="Choisir le dossier de musique source" />
 
         <Button Grid.Column="3"
           Content="Scan"
+          IsVisible="False"
           Click="ScanButton_Click"
           Padding="15,8"
           Margin="10,0,0,0"
@@ -62,7 +66,7 @@
     <Border Grid.Row="1" Padding="16,12" Background="#1b1b1b">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
         <TextBlock Grid.Column="0"
-                   Text="Target:"
+                   Text="Destination USB :"
                    VerticalAlignment="Center"
                    FontWeight="Bold"
                    Margin="0,0,10,0" />
@@ -76,21 +80,22 @@
            Background="#222222"
            Foreground="White"
            BorderBrush="#2f2f2f"
-                 PlaceholderText="Select target folder (USB drive)..." />
+                 PlaceholderText="Choisir le dossier de destination sur l’USB…" />
 
           <Button Grid.Column="2"
-          Content="Browse..."
+          Name="BrowseTargetButton"
+          Content="Choisir…"
           Click="BrowseTargetButton_Click"
           Padding="15,8"
           Margin="10,0,0,0"
           FontSize="14"
           Background="#222222"
           Foreground="White"
-          ToolTip.Tip="Select target USB drive folder" />
+          ToolTip.Tip="Choisir la destination USB" />
 
           <Button Grid.Column="3"
           Name="CompareButton"
-          Content="Compare"
+          Content="Réanalyser"
           Click="CompareButton_Click"
           Padding="15,8"
           Margin="10,0,0,0"
@@ -99,11 +104,11 @@
           Background="#1DB954"
           Foreground="White"
           IsEnabled="False"
-          ToolTip.Tip="Match source tracks against target by metadata" />
+          ToolTip.Tip="Actualiser l’analyse des deux dossiers sans écrire de fichiers" />
 
         <Button Grid.Column="4"
           Name="AdvancedButton"
-          Content="Avancé ▾"
+          Content="Outils avancés ▾"
           Click="AdvancedButton_Click"
           Padding="12,8"
           Margin="20,0,0,0"
@@ -117,10 +122,13 @@
     <!-- ── Actions toolbar ── -->
     <Border Grid.Row="2" Padding="16,10" Background="#1b1b1b">
       <Grid ColumnDefinitions="*,Auto">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <StackPanel Grid.Column="0" Spacing="8" VerticalAlignment="Center">
+          <TextBlock Name="WorkflowSummaryText" TextWrapping="Wrap" Foreground="#DDDDDD" />
+          <TextBlock Name="ProfileText" TextWrapping="Wrap" Foreground="#AAAAAA" FontSize="12" />
+          <StackPanel Orientation="Horizontal" Spacing="12">
           <Button Name="ConvertButton"
+                  IsVisible="False"
                   Content="Convert FLAC to MP3 (320kbps)"
-                  Click="ConvertButton_Click"
                   Padding="14,9"
                   FontSize="13"
                   FontWeight="Bold"
@@ -129,11 +137,9 @@
                   IsEnabled="False"
                   ToolTip.Tip="Convert FLAC files to the configured output format" />
 
-            <!-- Rename (Picard) removed -->
-
               <Button Name="TransferButton"
+              IsVisible="False"
               Content="Transfer to Target"
-              Click="TransferButton_Click"
               Padding="14,9"
               FontSize="13"
               FontWeight="Bold"
@@ -143,7 +149,7 @@
               ToolTip.Tip="Copy or transcode missing tracks to the target" />
 
             <Button Name="PrepareUsbButton"
-              Content="One-Step Prepare USB"
+              Content="2. Analyser"
               Click="PrepareUsbButton_Click"
               Padding="14,9"
               FontSize="13"
@@ -151,16 +157,16 @@
               Background="#138a36"
               Foreground="White"
               IsEnabled="False"
-              ToolTip.Tip="Compare, optionally open Picard for tag fixes, then transfer everything in one guided flow" />
-
-
+              ToolTip.Tip="Analyser les deux dossiers, vérifier le résumé, puis préparer l’USB" />
+            <CheckBox Name="UseSelectionCheckBox" Content="Limiter à la sélection du tableau" VerticalAlignment="Center" Foreground="#DDDDDD" />
+          </StackPanel>
 
             <CheckBox Name="CompilationCheckBox"
                   IsVisible="False"
                   IsChecked="True"
                   VerticalAlignment="Center"
                   ToolTip.Tip="When checked, albums with multiple artists are grouped under a 'Various Artists' folder">
-                <TextBlock Text="Group multi-artist albums under 'Various Artists'"
+                <TextBlock Text="Conversion locale : regrouper les compilations sous « Various Artists »"
                      Foreground="#CCCCCC"
                      FontStyle="Italic" />
               </CheckBox>
@@ -175,16 +181,17 @@
                          Margin="0,0,8,0" />
 
             <Button Name="SettingsButton"
-              Content="⚙ Settings"
+              Content="⚙ Paramètres"
               Click="SettingsButton_Click"
               Padding="14,9"
               FontSize="13"
               FontWeight="Bold"
               Background="#222222"
               Foreground="White"
-              ToolTip.Tip="Configure which formats to keep and the output codec/bitrate" />
+              ToolTip.Tip="Choisir les formats copiés et le profil de conversion" />
+            <Button Content="Logs FFmpeg" Click="ShowLogsButton_Click" Padding="14,9" />
 
-            <Button Content="Quit"
+            <Button Content="Quitter"
               Click="QuitButton_Click"
               Padding="14,9"
               FontSize="13"
@@ -197,7 +204,7 @@
     </Border>
 
     <!-- ── Content area: progress + stats + datagrid ── -->
-    <Grid Grid.Row="3" Margin="16" RowDefinitions="Auto,Auto,*">
+    <Grid Grid.Row="3" Margin="16" RowDefinitions="Auto,Auto,Auto,*">
       <Border Grid.Row="0"
           Name="ProgressBorder"
           Padding="15"
@@ -229,7 +236,7 @@
 
           <Button Grid.Row="3"
                   Name="StopButton"
-                  Content="Stop"
+                  Content="Arrêter"
                   Click="StopButton_Click"
                   Padding="14,8"
                   HorizontalAlignment="Center"
@@ -244,28 +251,29 @@
       <Border Grid.Row="1" Background="#0b6b3f" Padding="10,8" CornerRadius="5" Margin="0,0,0,10">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="40">
           <StackPanel>
-            <TextBlock Text="Total Files" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
+            <TextBlock Text="Pistes source" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
             <TextBlock Name="TotalFilesText" Text="0" Foreground="White" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
           </StackPanel>
 
           <StackPanel>
-            <TextBlock Text="MP3 Files" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
+            <TextBlock Text="MP3" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
             <TextBlock Name="ImageCountText" Text="0" Foreground="White" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
           </StackPanel>
 
           <StackPanel>
-            <TextBlock Text="FLAC Files" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
+            <TextBlock Text="FLAC" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
             <TextBlock Name="VideoCountText" Text="0" Foreground="White" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
           </StackPanel>
 
           <StackPanel>
-            <TextBlock Text="Total Size" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
+            <TextBlock Text="Taille source" Foreground="White" FontSize="11" HorizontalAlignment="Center" />
             <TextBlock Name="TotalSizeText" Text="0 MB" Foreground="White" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
           </StackPanel>
         </StackPanel>
       </Border>
 
-      <dg:DataGrid Grid.Row="2"
+      <TextBlock Grid.Row="2" Name="ResultText" TextWrapping="Wrap" Foreground="#8FE0AC" Margin="0,0,0,10" FontWeight="SemiBold" />
+      <dg:DataGrid Grid.Row="3"
                    x:Name="FilesDataGrid"
                    x:DataType="local:MediaFileInfo"
                    AutoGenerateColumns="False"
@@ -273,15 +281,15 @@
                    HeadersVisibility="Column"
                    SelectionMode="Extended">
         <dg:DataGrid.Columns>
-          <dg:DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*" MinWidth="200" />
+          <dg:DataGridTextColumn Header="Fichier" Binding="{Binding FileName}" Width="*" MinWidth="200" />
           <dg:DataGridTextColumn Header="Type" Binding="{Binding FileType}" Width="80" />
           <dg:DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="100" />
-          <dg:DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="140" />
+          <dg:DataGridTextColumn Header="Artiste" Binding="{Binding Artist}" Width="140" />
           <dg:DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="160" />
-          <dg:DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="180" />
-          <dg:DataGridTextColumn Header="Compare" Binding="{Binding CompareStatus}" Width="120" />
-          <dg:DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="100" />
-          <dg:DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="*" MinWidth="200" />
+          <dg:DataGridTextColumn Header="Titre" Binding="{Binding Title}" Width="180" />
+          <dg:DataGridTextColumn Header="État USB" Binding="{Binding CompareStatus}" Width="150" />
+          <dg:DataGridTextColumn Header="Taille" Binding="{Binding FileSize}" Width="100" />
+          <dg:DataGridTextColumn Header="Chemin source" Binding="{Binding FilePath}" Width="*" MinWidth="200" />
         </dg:DataGrid.Columns>
       </dg:DataGrid>
     </Grid>
@@ -289,7 +297,7 @@
     <!-- ── Status bar ── -->
     <Border Grid.Row="4" Background="#34495E" Padding="10">
       <TextBlock Name="StatusText"
-                 Text="Ready. Select a source folder and click Scan to begin."
+                 Text="Choisissez les deux dossiers, puis cliquez sur Analyser. MusicBrainz sera intégré dans une phase future."
                  Foreground="White"
                  FontSize="12" />
     </Border>
